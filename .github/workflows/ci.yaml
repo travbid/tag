@@ -1,0 +1,41 @@
+name: ci
+on:
+  push:
+    branches:
+      - master
+      - ci
+    paths-ignore:
+      - '**.md'  # Ignore README changes
+  pull_request:
+    paths-ignore:
+      - '**.md'
+
+permissions:
+  contents: read
+
+env:
+  RUST_BACKTRACE: '1'  # Make debugging easier if catapult fails at runtime
+
+jobs:
+  check-formatting:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - run: cargo fmt --check --verbose
+  test:
+    name: Cargo Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - run: cargo test
+
+  build:
+    name: Build (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - run: cargo build
