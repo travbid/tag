@@ -96,8 +96,6 @@ fn main() -> Result<(), i32> {
 				let mime = split.next();
 				let description = split.next();
 				let path = split.collect::<Vec<_>>().join(":");
-				println!("arg: {arg}");
-				println!("pic path: {path}");
 				if typ.is_none() || mime.is_none() || description.is_none() || path.is_empty() {
 					println!(
 						"picture flag format must be {{type}}:{{mime type}}:{{description}}:{{path}}. Found {}",
@@ -176,7 +174,6 @@ fn main() -> Result<(), i32> {
 }
 
 fn recode_path(path: &Path, flags: &Flags) -> Result<(), String> {
-	println!("Name: {}", path.display());
 	if path.file_name().unwrap_or_default().to_string_lossy().ends_with(".mp3") {
 		recode_mp3_file(path, flags)?;
 	} else if path.file_name().unwrap_or_default().to_string_lossy().ends_with(".m4a") {
