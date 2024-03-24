@@ -453,10 +453,9 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 		.filter(|frame| {
 			if cmd_flags.remove.contains(String::from_utf8_lossy(&frame.id).as_ref()) {
 				println!("Dropping frame: {}", frame.display());
-				return true;
+				return false;
 			}
-
-			false
+			true
 		})
 		.collect();
 
