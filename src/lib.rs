@@ -54,7 +54,7 @@ pub fn read_id3_frames(content: &[u8]) -> (Vec<id3::ID3Frame>, usize) {
 		ix += 4;
 		let flags = &content[ix..ix + 2];
 		if flags[0] != 0 || flags[1] != 0 {
-			panic!("flags != 0: {} {}", flags[0], flags[1]);
+			panic!("flags != 0: {} {}\ncode: {}", flags[0], flags[1], code);
 		}
 		ix += 2;
 

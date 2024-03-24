@@ -1,6 +1,6 @@
 use getopts;
 use std::{fs::DirEntry, path::Path};
-use tag::id3::ID3FrameType;
+use tag::{id3, id3::ID3FrameType};
 
 fn main() -> Result<(), i32> {
 	let args: Vec<String> = std::env::args().collect();
@@ -95,18 +95,13 @@ fn list_mp3_frames(path: &Path) -> Result<(), String> {
 				println!("description: {}", f.content_desc);
 				println!("   encoding: {}", f.encoding);
 				println!("       text: {}", f.text);
-				let mut i = 0;
-				for c in f.text.chars() {
-					if !c.is_ascii() {
-						let mut dst = [0; 4];
-						c.encode_utf8(&mut dst);
-						println!("not ascii: {i} {c}: {:02x} {:02x} {:02x} {:02x}", dst[0], dst[1], dst[2], dst[3]);
-					}
-					i+=1;
-				}
 			}
 			ID3FrameType::Picture(f) => {
-				println!("       type: {:#X} ({})", f.pic_type, pic_type_name(f.pic_type));
+				println!(
+					"       type: {:#X} ({})",
+					f.pic_type,
+					id3::pic_type_name(f.pic_type).unwrap_or("???")
+				);
 				println!("       mime: {}", f.mime);
 				println!("description: {}", f.description);
 				println!("       size: {} bytes", f.data.len());
@@ -133,31 +128,4 @@ fn list_mp3_frames(path: &Path) -> Result<(), String> {
 	}
 
 	Ok(())
-}
-
-fn pic_type_name(b: u8) -> &'static str {
-	match b {
-		0x00 => "Other",
-		0x01 => "32x32 pixels 'file icon' (PNG only)",
-		0x02 => "Other file icon",
-		0x03 => "Cover (front)",
-		0x04 => "Cover (back)",
-		0x05 => "Leaflet page",
-		0x06 => "Media (e.g. label side of CD)",
-		0x07 => "Lead artist/lead performer/soloist",
-		0x08 => "Artist/performer",
-		0x09 => "Conductor",
-		0x0A => "Band/Orchestra",
-		0x0B => "Composer",
-		0x0C => "Lyricist/text writer",
-		0x0D => "Recording Location",
-		0x0E => "During recording",
-		0x0F => "During performance",
-		0x10 => "Movie/video screen capture",
-		0x11 => "A bright coloured fish",
-		0x12 => "Illustration",
-		0x13 => "Band/artist logotype",
-		0x14 => "Publisher/Studio logotype",
-		_ => "???",
-	}
 }

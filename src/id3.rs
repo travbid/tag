@@ -209,6 +209,34 @@ pub enum ID3PictureType {
 	PublisherStudioLogotype = 0x14,
 }
 
+
+pub fn pic_type_name(b: u8) -> Option<&'static str> {
+	match b {
+		0x00 => Some("Other"),
+		0x01 => Some("32x32 pixels 'file icon' (PNG only)"),
+		0x02 => Some("Other file icon"),
+		0x03 => Some("Cover (front)"),
+		0x04 => Some("Cover (back)"),
+		0x05 => Some("Leaflet page"),
+		0x06 => Some("Media (e.g. label side of CD)"),
+		0x07 => Some("Lead artist/lead performer/soloist"),
+		0x08 => Some("Artist/performer"),
+		0x09 => Some("Conductor"),
+		0x0A => Some("Band/Orchestra"),
+		0x0B => Some("Composer"),
+		0x0C => Some("Lyricist/text writer"),
+		0x0D => Some("Recording Location"),
+		0x0E => Some("During recording"),
+		0x0F => Some("During performance"),
+		0x10 => Some("Movie/video screen capture"),
+		0x11 => Some("A bright coloured fish"),
+		0x12 => Some("Illustration"),
+		0x13 => Some("Band/artist logotype"),
+		0x14 => Some("Publisher/Studio logotype"),
+		_ => None,
+	}
+}
+
 impl ID3PictureFrame {
 	pub fn bytes(&self) -> Vec<u8> {
 		let encoding = if self.description.chars().all(|x| x.is_ascii()) && self.mime.chars().all(|x| x.is_ascii()) {

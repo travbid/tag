@@ -8,10 +8,16 @@ use std::{
 };
 
 use tag::{
-	id3,
-	id3::{ID3CommentFrame, ID3Frame},
+	id3::{self, ID3CommentFrame, ID3Frame, ID3PictureFrame},
 	mp4,
 };
+
+struct PictureArg {
+	typ: u8,
+	mime: String,
+	description: String,
+	path: String,
+}
 
 struct Flags {
 	title: Option<String>,
@@ -23,6 +29,7 @@ struct Flags {
 	record_date: Option<String>,
 	comment: Option<String>,
 	combine_comments: bool,
+	pictures: Vec<PictureArg>,
 	remove: HashSet<String>,
 	//
 	out_path: PathBuf,
@@ -41,6 +48,12 @@ fn main() -> Result<(), i32> {
 	opts.optopt("", "content-type", "Content-type (genre)", "GENRE");
 	opts.optopt("", "comment", "Comment data to add", "TEXT");
 	opts.optflag("", "combine_comments", "Combine comment frames");
+	opts.optmulti(
+		"",
+		"picture",
+		"Picture to add in format {type}:{path to image}",
+		"PICTURE",
+	);
 	opts.optopt(
 		"",
 		"remove",
@@ -74,6 +87,39 @@ fn main() -> Result<(), i32> {
 		record_date: matches.opt_str("record-date"),
 		comment: matches.opt_str("comment"),
 		combine_comments: matches.opt_defined("combine_comments"),
+		pictures: matches
+			.opt_strs("picture")
+			.iter()
+			.map(|arg| {
+				let mut split = arg.split(':');
+				let typ = split.next();
+				let mime = split.next();
+				let description = split.next();
+				let path = split.collect::<Vec<_>>().join(":");
+				println!("arg: {arg}");
+				println!("pic path: {path}");
+				if typ.is_none() || mime.is_none() || description.is_none() || path.is_empty() {
+					println!(
+						"picture flag format must be {{type}}:{{mime type}}:{{description}}:{{path}}. Found {}",
+						arg
+					);
+					return Err(1);
+				}
+				let typ = match match_pic_type(typ.unwrap()) {
+					Some(x) => x,
+					None => {
+						println!("picture flag type is invalid. Found \"{}\"", typ.unwrap());
+						return Err(1);
+					}
+				};
+				Ok(PictureArg {
+					typ: typ,
+					mime: mime.unwrap().to_owned(),
+					description: description.unwrap().to_owned(),
+					path,
+				})
+			})
+			.collect::<Result<Vec<_>, i32>>()?,
 		remove: matches
 			.opt_str("remove")
 			.unwrap_or(String::new())
@@ -554,6 +600,26 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 		frames = frames.into_iter().filter(|f| &f.id != b"COMM").collect();
 	}
 
+	for pic in &cmd_flags.pictures {
+		let data = match std::fs::read(&pic.path) {
+			Ok(x) => x,
+			Err(e) => {
+				let err_msg = format!("Error reading picture path {}: {}", pic.path, e);
+				return Err(err_msg);
+			}
+		};
+		new_frames.push(ID3Frame {
+			id: b"APIC".to_owned(),
+			flags: [0, 0],
+			data: id3::ID3FrameType::Picture(ID3PictureFrame {
+				mime: pic.mime.clone(),
+				pic_type: pic.typ,
+				description: pic.description.clone(),
+				data,
+			}),
+		});
+	}
+
 	if let Some(ix) = frames.iter().position(|f| &f.id == b"APIC") {
 		new_frames.push(frames.remove(ix));
 	}
@@ -619,4 +685,31 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 	};
 
 	Ok(())
+}
+
+fn match_pic_type(typ: &str) -> Option<u8> {
+	match typ {
+		"Other" => Some(0x00),
+		"32x32 pixels 'file icon' (PNG only)" => Some(0x01),
+		"Other file icon" => Some(0x02),
+		"Cover (front)" => Some(0x03),
+		"Cover (back)" => Some(0x04),
+		"Leaflet page" => Some(0x05),
+		"Media (e.g. label side of CD)" => Some(0x06),
+		"Lead artist/lead performer/soloist" => Some(0x07),
+		"Artist/performer" => Some(0x08),
+		"Conductor" => Some(0x09),
+		"Band/Orchestra" => Some(0x0A),
+		"Composer" => Some(0x0B),
+		"Lyricist/text writer" => Some(0x0C),
+		"Recording Location" => Some(0x0D),
+		"During recording" => Some(0x0E),
+		"During performance" => Some(0x0F),
+		"Movie/video screen capture" => Some(0x10),
+		"A bright coloured fish" => Some(0x11),
+		"Illustration" => Some(0x12),
+		"Band/artist logotype" => Some(0x13),
+		"Publisher/Studio logotype" => Some(0x14),
+		_ => None,
+	}
 }
