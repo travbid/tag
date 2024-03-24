@@ -376,7 +376,7 @@ fn move_text_item(new_list: &mut Vec<ID3Frame>, old_list: &mut Vec<ID3Frame>, co
 			flags: [0, 0],
 			data: id3::ID3FrameType::Text(id3::ID3TextFrame {
 				data: item.clone(),
-				encoding: if item.chars().all(char::is_ascii) { 0 } else { 3 },
+				encoding: if item.chars().all(|c| c.is_ascii()) { 0 } else { 3 },
 			}),
 		});
 		if let Some(ix) = old_list.iter().position(|f| f.id == code) {
@@ -439,7 +439,7 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 			flags: [0, 0],
 			data: id3::ID3FrameType::Text(id3::ID3TextFrame {
 				data: artist.clone(),
-				encoding: if artist.chars().all(char::is_ascii) { 0 } else { 3 },
+				encoding: if artist.chars().all(|c| c.is_ascii()) { 0 } else { 3 },
 			}),
 		});
 		new_frames.push(id3::ID3Frame {
@@ -447,7 +447,7 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 			flags: [0, 0],
 			data: id3::ID3FrameType::Text(id3::ID3TextFrame {
 				data: artist.clone(),
-				encoding: if artist.chars().all(char::is_ascii) { 0 } else { 3 },
+				encoding: if artist.chars().all(|c| c.is_ascii()) { 0 } else { 3 },
 			}),
 		});
 		if let Some(ix) = frames.iter().position(|f| &f.id == b"TPE1") {
@@ -481,7 +481,7 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 			flags: [0, 0],
 			data: id3::ID3FrameType::Text(id3::ID3TextFrame {
 				data: item.clone(),
-				encoding: if item.chars().all(char::is_ascii) { 0 } else { 3 },
+				encoding: if item.chars().all(|c| c.is_ascii()) { 0 } else { 3 },
 			}),
 		});
 		if let Some(ix) = frames.iter().position(|f| &f.id == b"TDRC") {
@@ -512,7 +512,7 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 				language: [b'e', b'n', b'g'], // eng
 				content_desc: String::new(),
 				text: comment.clone(),
-				encoding: if comment.chars().all(char::is_ascii) { 0 } else { 3 },
+				encoding: if comment.chars().all(|c| c.is_ascii()) { 0 } else { 3 },
 			}),
 		});
 		frames = frames.into_iter().filter(|f| &f.id != b"COMM").collect();
@@ -535,7 +535,7 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 		}
 		for comment in comments {
 			let (content_desc, text) = comment;
-			let encoding = if text.chars().all(char::is_ascii) && content_desc.chars().all(char::is_ascii) {
+			let encoding = if text.chars().all(|c| c.is_ascii()) && content_desc.chars().all(|c| c.is_ascii()) {
 				0
 			} else {
 				3
