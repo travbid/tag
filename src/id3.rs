@@ -209,7 +209,6 @@ pub enum ID3PictureType {
 	PublisherStudioLogotype = 0x14,
 }
 
-
 pub fn pic_type_name(b: u8) -> Option<&'static str> {
 	match b {
 		0x00 => Some("Other"),
