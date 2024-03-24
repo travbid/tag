@@ -425,9 +425,7 @@ fn move_text_item(new_list: &mut Vec<ID3Frame>, old_list: &mut Vec<ID3Frame>, co
 				encoding: if item.chars().all(|c| c.is_ascii()) { 0 } else { 3 },
 			}),
 		});
-		if let Some(ix) = old_list.iter().position(|f| f.id == code) {
-			old_list.remove(ix);
-		}
+		old_list.retain(|f| f.id != code);
 	} else if let Some(ix) = old_list.iter().position(|f| f.id == code) {
 		new_list.push(old_list.remove(ix));
 	}
@@ -619,8 +617,8 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 		});
 	}
 
-	if let Some(ix) = frames.iter().position(|f| &f.id == b"APIC") {
-		new_frames.push(frames.remove(ix));
+	if !cmd_flags.pictures.is_empty() {
+		frames = frames.into_iter().filter(|frame| &frame.id != b"APIC").collect();
 	}
 
 	for frame in frames {
