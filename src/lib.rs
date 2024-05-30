@@ -105,6 +105,10 @@ pub fn read_id3_frames(content: &[u8]) -> (Vec<id3::ID3Frame>, usize) {
 			}
 			// Recording time
 			"TDRC" => id3::ID3FrameType::Text(handle_t(&content[ix..ix + sz])),
+			// Encoded by
+			"TENC" => id3::ID3FrameType::Text(handle_t(&content[ix..ix + sz])),
+			// Content group description
+			"TIT1" => id3::ID3FrameType::Text(handle_t(&content[ix..ix + sz])),
 			// Title/songname/content description
 			"TIT2" => id3::ID3FrameType::Text(handle_t(&content[ix..ix + sz])),
 			// The length of the audio file in milliseconds, represented as a numeric string.
