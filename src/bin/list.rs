@@ -1,4 +1,3 @@
-use getopts;
 use std::{fs::DirEntry, path::Path};
 use tag::{id3, id3::ID3FrameType};
 
@@ -57,7 +56,7 @@ fn main() -> Result<(), i32> {
 		}
 	}
 
-	return Ok(());
+	Ok(())
 }
 
 fn list_frames(path: &Path) -> Result<(), String> {
@@ -107,7 +106,7 @@ fn list_mp3_frames(path: &Path) -> Result<(), String> {
 				println!("       size: {} bytes", f.data.len());
 			}
 			ID3FrameType::Text(f) => {
-				if &frame.id == "TXXX".as_bytes() {
+				if frame.id == *b"TXXX" {
 					let mut description = String::new();
 					let mut char_count = 0;
 					for x in f.data.chars() {

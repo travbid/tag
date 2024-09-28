@@ -111,7 +111,7 @@ fn main() -> Result<(), i32> {
 					}
 				};
 				Ok(PictureArg {
-					typ: typ,
+					typ,
 					mime: mime.unwrap().to_owned(),
 					description: description.unwrap().to_owned(),
 					path,
@@ -443,23 +443,20 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 
 	let (mut frames, id3_size) = tag::read_id3_frames(&content);
 
-	frames = frames
-		.into_iter()
-		.filter(|frame| {
-			if cmd_flags.remove.contains(String::from_utf8_lossy(&frame.id).as_ref()) {
-				println!("Dropping frame: {}", frame.display());
-				return false;
-			}
-			true
-		})
-		.collect();
+	frames.retain(|frame| {
+		if cmd_flags.remove.contains(String::from_utf8_lossy(&frame.id).as_ref()) {
+			println!("Dropping frame: {}", frame.display());
+			return false;
+		}
+		true
+	});
 
 	{
 		// Check for more than one frame of the same type
 		let mut seen = HashSet::new();
 		for frame in &frames {
 			if seen.contains(&frame.id) {
-				if frame.id == b"COMM".to_owned() && (cmd_flags.comment.is_some() || cmd_flags.combine_comments) {
+				if frame.id == *b"COMM" && (cmd_flags.comment.is_some() || cmd_flags.combine_comments) {
 					// Skip
 				} else {
 					panic!("More than one frame containing {}", String::from_utf8_lossy(&frame.id));
@@ -555,7 +552,7 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 				encoding: if comment.chars().all(|c| c.is_ascii()) { 0 } else { 3 },
 			}),
 		});
-		frames = frames.into_iter().filter(|f| &f.id != b"COMM").collect();
+		frames.retain(|f| &f.id != b"COMM");
 	} else if cmd_flags.combine_comments {
 		let mut comments = Vec::<(String, String)>::new();
 		for f in &frames {
@@ -591,7 +588,7 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 				}),
 			});
 		}
-		frames = frames.into_iter().filter(|f| &f.id != b"COMM").collect();
+		frames.retain(|f| &f.id != b"COMM");
 	}
 
 	for pic in &cmd_flags.pictures {
@@ -615,7 +612,7 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 	}
 
 	if !cmd_flags.pictures.is_empty() {
-		frames = frames.into_iter().filter(|frame| &frame.id != b"APIC").collect();
+		frames.retain(|frame| &frame.id != b"APIC");
 	}
 
 	for frame in frames {

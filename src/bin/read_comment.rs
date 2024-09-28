@@ -37,7 +37,7 @@ fn read_comment(path: &Path) -> Result<String, String> {
 					acc.push(comment.text.clone());
 					return Ok(acc);
 				}
-				_ => return Err(format!("COMM data does not have comment type")),
+				_ => return Err("COMM data does not have comment type".to_owned()),
 			}
 		}
 		Ok(acc)

@@ -134,6 +134,7 @@ pub enum ID3FrameType {
 }
 
 impl ID3FrameType {
+	#[allow(clippy::len_without_is_empty)]
 	pub fn len(&self) -> usize {
 		match self {
 			ID3FrameType::Text(f) => 1 + f.data.len(),
@@ -286,11 +287,11 @@ impl ID3CommentFrame {
 pub fn synchsafe_bytes(mut n: u32) -> [u8; 4] {
 	let mut b: [u8; 4] = [0, 0, 0, 0];
 	b[3] = (n % 128) as u8;
-	n = n >> 7;
+	n >>= 7;
 	b[2] = (n % 128) as u8;
-	n = n >> 7;
+	n >>= 7;
 	b[1] = (n % 128) as u8;
-	n = n >> 7;
+	n >>= 7;
 	b[0] = (n % 128) as u8;
 	b
 }
