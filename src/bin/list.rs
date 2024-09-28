@@ -1,5 +1,5 @@
 use std::{fs::DirEntry, path::Path};
-use tag::{id3, id3::ID3FrameType};
+use tag::{id3, id3::ID3FrameType, parse_mp4_frames};
 
 fn main() -> Result<(), i32> {
 	let args: Vec<String> = std::env::args().collect();
@@ -63,6 +63,8 @@ fn list_frames(path: &Path) -> Result<(), String> {
 	println!("Name: {}", path.display());
 	if path.file_name().unwrap_or_default().to_string_lossy().ends_with(".mp3") {
 		list_mp3_frames(path)?;
+	} else if path.file_name().unwrap_or_default().to_string_lossy().ends_with(".m4a") {
+		list_mp4_frames(path)?;
 	} else {
 		panic!("Unhandled extension: {}", path.display());
 	}
@@ -126,5 +128,19 @@ fn list_mp3_frames(path: &Path) -> Result<(), String> {
 		};
 	}
 
+	Ok(())
+}
+
+fn list_mp4_frames(path: &Path) -> Result<(), String> {
+	let content = match std::fs::read(path) {
+		Ok(s) => s,
+		Err(e) => {
+			return Err(format!("Could not open file: {}: {}", path.display(), e));
+		}
+	};
+	let list = parse_mp4_frames(&content);
+	for atom in list {
+		println!("atom: {}", atom.string(1));
+	}
 	Ok(())
 }

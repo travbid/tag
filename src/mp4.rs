@@ -1,16 +1,23 @@
-use core::convert::TryInto;
+use core::{convert::TryInto, str};
 
 use super::itunes;
 
 fn spacer(depth: u16) -> String {
 	let mut ret = Vec::<u8>::new();
-	ret.resize((depth * 2u16) as usize, ' ' as u8);
+	ret.resize((depth * 2u16) as usize, b' ');
 	String::from_utf8(ret).unwrap()
 }
 
 const fn array_str(s: &str) -> [u8; 4] {
 	let b = s.as_bytes();
-	[b[0] as u8, b[1] as u8, b[2] as u8, b[3] as u8]
+	[b[0], b[1], b[2], b[3]]
+}
+
+fn from_null_terminated(data: &[u8]) -> Result<String, std::string::FromUtf8Error> {
+	match data.iter().position(|x| *x == 0) {
+		None => String::from_utf8(data.to_owned()),
+		Some(idx) => String::from_utf8(data[..idx].to_owned()),
+	}
 }
 
 pub struct BaseBox {
@@ -37,13 +44,13 @@ impl FileTypeBox {
 		let mut compatible_brands = Vec::new();
 		let mut ix: usize = 16;
 		while ix < sz as usize {
-			compatible_brands.push([data[ix + 0], data[ix + 1], data[ix + 2], data[ix + 3]]);
+			compatible_brands.push([data[ix], data[ix + 1], data[ix + 2], data[ix + 3]]);
 			ix += 32;
 		}
 		FileTypeBox {
 			base: BaseBox {
 				size: sz,
-				boxtype: ['f' as u8, 't' as u8, 'y' as u8, 'p' as u8],
+				boxtype: *b"ftyp",
 			},
 			major_brand: u32::from_be_bytes(data[0..4].try_into().unwrap()),
 			minor_version: u32::from_be_bytes(data[4..8].try_into().unwrap()),
@@ -94,7 +101,7 @@ impl MovieBox {
 		let mut children = Vec::new();
 		let mut ix: usize = 0;
 		while ix < sz as usize - 8 {
-			let inner_sz = u32::from_be_bytes(data[ix + 0..ix + 4].try_into().unwrap());
+			let inner_sz = u32::from_be_bytes(data[ix..ix + 4].try_into().unwrap());
 			let name = match std::str::from_utf8(&data[ix + 4..ix + 8]) {
 				Ok(x) => x,
 				Err(e) => panic!("from_utf8: {} {} {:?}", e, ix, &data[ix + 4..ix + 8]),
@@ -153,7 +160,7 @@ impl MovieExtendsBox {
 			let name = std::str::from_utf8(&data[4..8]).unwrap();
 			let inner_data = &data[8..inner_sz as usize];
 			let child = match name {
-				_ => panic!("Undhandled type in mvex: {}, {:?}", name, &data[4..8]),
+				_ => todo!("Undhandled type in mvex: {}, {:?}", name, &data[4..8]),
 			};
 			children.push(child);
 			ix += inner_sz as usize;
@@ -277,7 +284,7 @@ impl TrackBox {
 		let mut children = Vec::new();
 		let mut ix: usize = 0;
 		while ix < sz as usize - 8 {
-			let inner_sz = u32::from_be_bytes(data[ix + 0..ix + 4].try_into().unwrap());
+			let inner_sz = u32::from_be_bytes(data[ix..ix + 4].try_into().unwrap());
 			let name = match std::str::from_utf8(&data[ix + 4..ix + 8]) {
 				Ok(x) => x,
 				Err(e) => panic!("from_utf8: {} {} {:?}", e, ix, &data[ix + 4..ix + 8]),
@@ -405,7 +412,7 @@ impl MediaBox {
 		let mut children = Vec::new();
 		let mut ix: usize = 0;
 		while ix < sz as usize - 8 {
-			let inner_sz = u32::from_be_bytes(data[ix + 0..ix + 4].try_into().unwrap());
+			let inner_sz = u32::from_be_bytes(data[ix..ix + 4].try_into().unwrap());
 			let name = match std::str::from_utf8(&data[ix + 4..ix + 8]) {
 				Ok(x) => x,
 				Err(e) => panic!("from_utf8: {} {} {:?}", e, ix, &data[ix + 4..ix + 8]),
@@ -413,7 +420,7 @@ impl MediaBox {
 			let inner_data = &data[ix + 8..ix + inner_sz as usize];
 			let child = match name {
 				"mdhd" => MediaAtom::MediaHeader(MediaHeaderBox::parse(inner_sz, inner_data)),
-				"hdlr" => MediaAtom::Handler(HandlerBox::parse(inner_sz, inner_data)),
+				"hdlr" => MediaAtom::Handler(HandlerBox::parse(inner_sz, &data[ix..ix + inner_sz as usize])),
 				"minf" => MediaAtom::MediaInformation(MediaInformationBox::parse(inner_sz, inner_data)),
 				_ => panic!("Undhandled type in mdia: {}, {:?}", name, &data[ix + 4..ix + 8]),
 			};
@@ -483,7 +490,7 @@ impl MediaHeaderBox {
 			timescale,
 			duration,
 
-			language: u16::from_be_bytes(data[off + 0..off + 2].try_into().unwrap()),
+			language: u16::from_be_bytes(data[off..off + 2].try_into().unwrap()),
 			pre_defined: u16::from_be_bytes(data[off + 2..off + 4].try_into().unwrap()),
 		}
 	}
@@ -501,24 +508,34 @@ pub struct HandlerBox {
 
 impl HandlerBox {
 	fn parse(sz: u32, data: &[u8]) -> HandlerBox {
+		println!("HandlerBox::parse({}, {})", sz, data.len());
 		HandlerBox {
 			base: FullBox {
 				base: BaseBox {
 					size: sz,
 					boxtype: array_str("hdlr"),
 				},
-				version: data[0],
-				flags: [data[1], data[2], data[3]],
+				version: data[8],
+				flags: [data[9], data[10], data[11]],
 			},
-			pre_defined: u32::from_be_bytes(data[4..8].try_into().unwrap()),
-			handler_type: [data[8], data[9], data[10], data[11]],
+			pre_defined: u32::from_be_bytes(data[12..16].try_into().unwrap()),
+			handler_type: [data[16], data[17], data[18], data[19]],
 			reserved: [
-				u32::from_be_bytes(data[12..16].try_into().unwrap()),
-				u32::from_be_bytes(data[16..20].try_into().unwrap()),
 				u32::from_be_bytes(data[20..24].try_into().unwrap()),
+				u32::from_be_bytes(data[24..28].try_into().unwrap()),
+				u32::from_be_bytes(data[28..32].try_into().unwrap()),
 			],
-			name: std::str::from_utf8(&data[24..]).unwrap().to_string(),
+			name: from_null_terminated(&data[32..sz as usize]).unwrap().to_string(),
 		}
+	}
+	pub fn string(&self, depth: u16) -> String {
+		let mut ret = String::from("hdlr: {\n");
+		ret += &spacer(depth + 1);
+		ret += "handler_type: ";
+		ret += str::from_utf8(&self.handler_type).unwrap();
+		ret += "\n";
+		ret += &(spacer(depth) + "}");
+		ret
 	}
 }
 
@@ -534,7 +551,7 @@ impl MediaInformationBox {
 		let mut children = Vec::new();
 		let mut ix: usize = 0;
 		while ix < sz as usize - 8 {
-			let inner_sz = u32::from_be_bytes(data[ix + 0..ix + 4].try_into().unwrap());
+			let inner_sz = u32::from_be_bytes(data[ix..ix + 4].try_into().unwrap());
 			let name = match std::str::from_utf8(&data[ix + 4..ix + 8]) {
 				Ok(x) => x,
 				Err(e) => panic!("from_utf8: {} {} {:?}", e, ix, &data[ix + 4..ix + 8]),
@@ -568,6 +585,7 @@ pub struct SoundMediaHeaderBox {
 
 impl SoundMediaHeaderBox {
 	fn parse(sz: u32, data: &[u8]) -> SoundMediaHeaderBox {
+		println!("SoundMediaHeaderBox::parse({}, {})", sz, data.len());
 		SoundMediaHeaderBox {
 			base: FullBox {
 				base: BaseBox {
@@ -595,7 +613,7 @@ impl DataInformationBox {
 		let mut children = Vec::new();
 		let mut ix: usize = 0;
 		while ix < sz as usize - 8 {
-			let inner_sz = u32::from_be_bytes(data[ix + 0..ix + 4].try_into().unwrap());
+			let inner_sz = u32::from_be_bytes(data[ix..ix + 4].try_into().unwrap());
 			let name = match std::str::from_utf8(&data[ix + 4..ix + 8]) {
 				Ok(x) => x,
 				Err(e) => panic!("from_utf8: {} {} {:?}", e, ix, &data[ix + 4..ix + 8]),
@@ -654,6 +672,7 @@ impl DataReferenceBox {
 pub enum DataEntryBox {
 	Url(DataEntryUrlBox),
 	Urn(DataEntryUrnBox),
+	Free(FreeSpaceBox),
 }
 
 impl DataEntryBox {
@@ -686,6 +705,8 @@ impl DataEntryBox {
 					std::str::from_utf8(&data[16..]).unwrap().to_string()
 				},
 			})
+		} else if name == "free" {
+			DataEntryBox::Free(FreeSpaceBox::parse(sz, &data[..sz as usize]))
 		} else {
 			panic!("Unhandled DataEntryBox type: {} {:?}", name, &data[8..12]);
 		}
@@ -694,6 +715,7 @@ impl DataEntryBox {
 		match self {
 			DataEntryBox::Url(x) => x.base.base.size,
 			DataEntryBox::Urn(x) => x.base.base.size,
+			DataEntryBox::Free(x) => x.base.size,
 		}
 	}
 }
@@ -723,7 +745,7 @@ impl SampleTableBox {
 		let mut children = Vec::new();
 		let mut ix: usize = 0;
 		while ix < sz as usize - 8 {
-			let inner_sz = u32::from_be_bytes(data[ix + 0..ix + 4].try_into().unwrap());
+			let inner_sz = u32::from_be_bytes(data[ix..ix + 4].try_into().unwrap());
 			let name = match std::str::from_utf8(&data[ix + 4..ix + 8]) {
 				Ok(x) => x,
 				Err(e) => panic!("from_utf8: {} {} {:?}", e, ix, &data[ix + 4..ix + 8]),
@@ -878,6 +900,7 @@ pub struct VisualSampleEntry {
 
 impl VisualSampleEntry {
 	pub fn parse(sz: u32, data: &[u8]) -> VisualSampleEntry {
+		println!("VisualSampleEntry::parse({}, {})", sz, data.len());
 		let reserved: [u8; 6] = data[0..6].try_into().unwrap();
 		let data_reference_index = u16::from_be_bytes(data[6..8].try_into().unwrap());
 		let pre_defined1 = u16::from_be_bytes(data[8..10].try_into().unwrap());
@@ -935,6 +958,7 @@ pub struct AudioSampleEntry {
 
 impl AudioSampleEntry {
 	pub fn parse(sz: u32, data: &[u8]) -> AudioSampleEntry {
+		println!("AudioSampleEntry::parse({}, {})", sz, data.len());
 		let reserved: [u8; 6] = data[0..6].try_into().unwrap();
 		let data_reference_index = u16::from_be_bytes(data[6..8].try_into().unwrap());
 		let reserved1: [u32; 2] = [
@@ -1115,21 +1139,25 @@ pub trait UserDataType {}
 pub struct UserDataBox {
 	pub base: BaseBox,
 	// pub children: Vec<std::boxed::Box<dyn UserDataType>>,
-	pub children: Vec<Vec<u8>>,
+	pub children: Vec<UserDataAtom>,
 }
 
 impl UserDataBox {
 	fn parse(sz: u32, data: &[u8]) -> UserDataBox {
 		println!("UserDataBox::parse({}, {})", sz, data.len());
 		let mut total = 0;
-		let mut children = Vec::<Vec<u8>>::new();
+		let mut children = Vec::new();
 		while total < sz - 8 {
-			println!("total: {}", total);
-			let sz2 = u32::from_be_bytes(data[total as usize..total as usize + 4].try_into().unwrap());
-			println!("sz2: {}", sz2);
-			let v = data[total as usize..(total + sz2) as usize].to_vec();
-			children.push(v);
-			total += sz2;
+			let box_sz = u32::from_be_bytes(data[total as usize..total as usize + 4].try_into().unwrap());
+			let box_type = str::from_utf8(&data[total as usize + 4..total as usize + 8]).unwrap();
+			// let v = data[total as usize..(total + sz2) as usize].to_vec();
+			if box_type == "meta" {
+				let meta = MetaBox::parse(box_sz, &data[total as usize..total as usize + box_sz as usize]);
+				children.push(UserDataAtom::Meta(meta));
+			} else {
+				panic!("Unknown type in udta: {box_type}");
+			}
+			total += box_sz;
 		}
 
 		UserDataBox {
@@ -1140,40 +1168,99 @@ impl UserDataBox {
 			children,
 		}
 	}
+	pub fn string(&self, depth: u16) -> String {
+		let mut ret = String::from("udta: {\n");
+		ret += &spacer(depth + 1);
+		ret += "children: [\n";
+		for item in &self.children {
+			ret += &match item {
+				UserDataAtom::Meta(x) => x.string(depth + 1),
+			};
+		}
+		ret += "]\n";
+		ret += &(spacer(depth) + "}");
+		ret
+	}
 }
 
 // meta
 pub struct MetaBox {
 	pub base: FullBox,
 	pub handler: HandlerBox,
-	// primary_resource: PrimaryItemBox,
-	// file_locations: DataInformationBox,
-	// item_locations: ItemLocationBox,
-	// protections: ItemProtectionBox,
-	// item_infos: ItemInfoBox,
-	// ipmp_control: IPMPControlBox,
-	// other_boxes: Vec<Box>,
+	// primary_resource: Option<PrimaryItemBox>,
+	// file_locations: Option<DataInformationBox>,
+	// item_locations: Option<ItemLocationBox>,
+	// protections: Option<ItemProtectionBox>,
+	// item_infos: Option<ItemInfoBox>,
+	// ipmp_control: Option<IPMPControlBox>,
+	other_boxes: Vec<MetaAtom>,
 }
 
 impl MetaBox {
 	fn parse(sz: u32, data: &[u8]) -> MetaBox {
 		println!("MetaBox::parse({}, {})", sz, data.len());
-		let hdlr_sz = u32::from_be_bytes(data[4..8].try_into().unwrap());
-		let handler_name = std::str::from_utf8(&data[8..12]).unwrap();
+		let version = data[8];
+		let flags = [data[9], data[10], data[11]];
+		let hdlr_sz = u32::from_be_bytes(data[12..16].try_into().unwrap());
+		let handler_name = std::str::from_utf8(&data[16..20]).unwrap();
 		if handler_name != "hdlr" {
-			panic!("Unhandle handler type in meta: {}, {:?}", handler_name, &data[8..12])
+			panic!(
+				"Unhandled handler type in meta: {} {}, {:?}",
+				hdlr_sz,
+				handler_name,
+				&data[16..20]
+			)
+		}
+		let handler = HandlerBox::parse(hdlr_sz, &data[12..12 + hdlr_sz as usize]);
+		let mut other_boxes = Vec::new();
+		let mut idx = 12 + hdlr_sz;
+		while idx < sz {
+			let udx = idx as usize;
+			let box_size = u32::from_be_bytes(data[udx..udx + 4].try_into().unwrap());
+			let box_type = std::str::from_utf8(&data[udx + 4..udx + 8]).unwrap();
+			if box_type == "ilst" {
+				let item_list = ItemList::parse(box_size, &data[udx..udx + box_size as usize]);
+				other_boxes.push(MetaAtom::ItemList(item_list));
+			} else if box_type == "free" {
+				other_boxes.push(MetaAtom::Free(FreeSpaceBox::parse(
+					box_size,
+					&data[udx..udx + box_size as usize],
+				)));
+			} else {
+				panic!("Unknown box type: {box_type}");
+			}
+			idx += box_size;
 		}
 		MetaBox {
 			base: FullBox {
 				base: BaseBox {
 					size: sz,
-					boxtype: ['m' as u8, 'e' as u8, 't' as u8, 'a' as u8],
+					boxtype: *b"meta",
 				},
-				version: data[0],
-				flags: [data[1], data[2], data[3]],
+				version,
+				flags,
 			},
-			handler: HandlerBox::parse(hdlr_sz, &data[12..]),
+			handler,
+			other_boxes,
 		}
+	}
+	pub fn string(&self, depth: u16) -> String {
+		let mut ret = String::from("meta: {\n");
+		ret += &spacer(depth + 1);
+		ret += "handler: ";
+		ret += &self.handler.string(depth + 1);
+		ret += "\n";
+		ret += &spacer(depth + 1);
+		ret += "other_boxes: [";
+		for item in &self.other_boxes {
+			ret += &match item {
+				MetaAtom::Free(x) => x.string(depth + 1),
+				MetaAtom::ItemList(x) => x.string(depth + 1),
+			};
+		}
+		ret += "]\n";
+		ret += &(spacer(depth) + "}");
+		ret
 	}
 }
 
@@ -1184,7 +1271,8 @@ pub struct MediaDataBox {
 }
 
 impl MediaDataBox {
-	pub fn parse(sz: u32, _data: &[u8]) -> MediaDataBox {
+	pub fn parse(sz: u32, data: &[u8]) -> MediaDataBox {
+		println!("MediaDataBox::parse({}, {})", sz, data.len());
 		MediaDataBox {
 			base: BaseBox {
 				size: sz,
@@ -1192,6 +1280,12 @@ impl MediaDataBox {
 			},
 			data: Vec::new(),
 		}
+	}
+	pub fn string(&self, depth: u16) -> String {
+		let mut ret = String::from("mdat: {\n");
+		ret += &format!("{}data: {} bytes", spacer(depth + 1), self.data.len());
+		ret += &(spacer(depth) + "}");
+		ret
 	}
 }
 
@@ -1201,6 +1295,7 @@ pub struct FreeSpaceBox {
 
 impl FreeSpaceBox {
 	pub fn parse(sz: u32, data: &[u8]) -> FreeSpaceBox {
+		println!("FreeSpaceBox::parse({}, {})", sz, data.len());
 		FreeSpaceBox {
 			base: BaseBox {
 				size: sz,
@@ -1208,8 +1303,176 @@ impl FreeSpaceBox {
 			},
 		}
 	}
+	pub fn string(&self, depth: u16) -> String {
+		format!("{}free: {} bytes", spacer(depth + 1), self.base.size)
+	}
 }
 
+// Non-standard
+struct ItemListItem {
+	tag_id: [u8; 4],
+	value: ItunesValue,
+}
+struct ItunesInfo {
+	mean: String,
+	tag_id: String,
+	value: ItunesValue,
+}
+enum ItunesValue {
+	Binary(u32),
+	Text(String),
+}
+enum ItemListType {
+	Item(ItemListItem),
+	ItunesInfo(ItunesInfo),
+}
+struct ItemList {
+	base: FullBox,
+	items: Vec<ItemListType>,
+}
+impl ItemList {
+	fn parse(sz: u32, data: &[u8]) -> ItemList {
+		println!("ItemList::parse({}, {})", sz, data.len());
+		let mut items = Vec::new();
+		let mut idx = 8;
+		while idx < sz {
+			println!("- {idx}");
+			let udx = idx as usize;
+			let sz = u32::from_be_bytes(data[udx..udx + 4].try_into().unwrap());
+			let tag_id: [u8; 4] = data[udx + 4..udx + 8].try_into().unwrap();
+			if tag_id == *b"----" {
+				let mean_sz = u32::from_be_bytes(data[udx + 8..udx + 12].try_into().unwrap());
+				let mean_tag = std::str::from_utf8(&data[udx + 12..udx + 16]).unwrap();
+				if mean_tag != "mean" {
+					panic!("Expected \"mean\"");
+				}
+				let mean_str = str::from_utf8(&data[udx + 20..udx + 8 + mean_sz as usize])
+					.unwrap()
+					.to_owned();
+
+				let name_ix = udx + 8 + mean_sz as usize;
+				let name_sz = u32::from_be_bytes(data[name_ix..name_ix + 4].try_into().unwrap());
+				let name_tag = std::str::from_utf8(&data[name_ix + 4..name_ix + 8]).unwrap();
+				if name_tag != "name" {
+					panic!("Expected \"name\" {mean_sz} {name_sz} {:?}", name_tag);
+				}
+				let name_str = str::from_utf8(&data[name_ix + 12..name_ix + name_sz as usize])
+					.unwrap()
+					.to_owned();
+				println!("/ {name_str}");
+				let data_ix = name_ix + name_sz as usize;
+				let data_sz = u32::from_be_bytes(data[data_ix..data_ix + 4].try_into().unwrap());
+				let data_tag = std::str::from_utf8(&data[data_ix + 4..data_ix + 8]).unwrap();
+				if data_tag != "data" {
+					panic!("Expected \"data\"");
+				}
+				let data_type = u32::from_be_bytes(data[data_ix + 8..data_ix + 12].try_into().unwrap());
+				let value = if data_type == 0 {
+					println!("= {data_ix} {data_sz} {name_str}");
+					// TODO(Travers): Encoding Params
+					if name_str == "Encoding Params" {
+						ItunesValue::Binary(0)
+					} else {
+						ItunesValue::Binary(u32::from_be_bytes(
+							data[data_ix + 16..data_ix + data_sz as usize].try_into().unwrap(),
+						))
+					}
+				} else if data_type == 1 {
+					let data_str = str::from_utf8(&data[data_ix + 16..data_ix + data_sz as usize])
+						.unwrap()
+						.to_owned();
+					ItunesValue::Text(data_str)
+				} else if data_type == 0x15 {
+					ItunesValue::Binary(
+						u8::from_be_bytes(data[data_ix + 16..data_ix + data_sz as usize].try_into().unwrap()) as u32,
+					)
+				} else {
+					panic!("Unknown data type: {data_type}")
+				};
+				items.push(ItemListType::ItunesInfo(ItunesInfo {
+					mean: mean_str,
+					tag_id: name_str,
+					value,
+				}));
+			} else {
+				let data_ix = udx + 8;
+				let data_sz = u32::from_be_bytes(data[data_ix..data_ix + 4].try_into().unwrap());
+				let data_tag = &data[data_ix + 4..data_ix + 8];
+				if data_tag != b"data" {
+					panic!("Expected \"data\" {sz} {:?} {data_sz} {:?}", tag_id, data_tag);
+				}
+				let data_type = u32::from_be_bytes(data[data_ix + 8..data_ix + 12].try_into().unwrap());
+				let value = if data_type == 0 {
+					// TODO(Travers): Encoding Params
+					println!("> {data_ix} {data_sz} {:?}", tag_id);
+					if tag_id == *b"trkn" || tag_id == *b"disk" {
+						ItunesValue::Binary(u32::from_be_bytes(
+							data[data_ix + 16..data_ix + 16 + 4].try_into().unwrap(),
+						))
+					} else {
+						ItunesValue::Binary(u32::from_be_bytes(
+							data[data_ix + 16..data_ix + data_sz as usize].try_into().unwrap(),
+						))
+					}
+				} else if data_type == 1 {
+					let data_str = String::from_utf8(data[data_ix + 16..data_ix + data_sz as usize].to_owned()).unwrap();
+					ItunesValue::Text(data_str)
+				} else if data_type == 0x15 {
+					println!("< {data_ix} {} {:?}", data_sz - 16, tag_id);
+					match &tag_id {
+						b"plID" => ItunesValue::Binary(u64::from_be_bytes(
+							data[data_ix + 16..data_ix + data_sz as usize].try_into().unwrap(),
+						) as u32),
+						b"atID" | b"cmID" | b"cnID" | b"geID" | b"sfID" => ItunesValue::Binary(u32::from_be_bytes(
+							data[data_ix + 16..data_ix + data_sz as usize].try_into().unwrap(),
+						)),
+						_ => ItunesValue::Binary(u8::from_be_bytes(
+							data[data_ix + 16..data_ix + data_sz as usize].try_into().unwrap(),
+						) as u32),
+					}
+				} else {
+					panic!("Unknown data type: {data_type}")
+				};
+				items.push(ItemListType::Item(ItemListItem { tag_id, value }));
+			}
+			idx += sz;
+		}
+		ItemList {
+			base: FullBox {
+				base: BaseBox {
+					size: sz,
+					boxtype: *b"ilst",
+				},
+				version: data[0],
+				flags: [data[1], data[2], data[3]],
+			},
+			items,
+		}
+	}
+	pub fn string(&self, depth: u16) -> String {
+		let mut ret = String::from("ilst: [\n");
+		for item in &self.items {
+			match item {
+				ItemListType::Item(ili) => {
+					ret += &spacer(depth + 1);
+					ret += &match &ili.value {
+						ItunesValue::Binary(x) => format!("{}: {},\n", String::from_utf8_lossy(&ili.tag_id), x),
+						ItunesValue::Text(x) => format!("{}: {},\n", String::from_utf8_lossy(&ili.tag_id), x),
+					};
+				}
+				ItemListType::ItunesInfo(info) => {
+					ret += &spacer(depth + 1);
+					ret += &match &info.value {
+						ItunesValue::Binary(x) => format!("{}: {} : {},\n", info.tag_id, x, info.mean),
+						ItunesValue::Text(x) => format!("{}: {} : {},\n", info.tag_id, x, info.mean),
+					};
+				}
+			}
+		}
+		ret += &(spacer(depth) + "]");
+		ret
+	}
+}
 // pub enum BaseAtom {
 // 	FreeSpace(FreeSpaceBox),
 // }
@@ -1231,9 +1494,9 @@ impl FileAtom {
 			+ &(match self {
 				FileAtom::FileType(x) => x.string(depth + 1),
 				FileAtom::Movie(x) => x.string(depth + 1),
-				FileAtom::MediaData(x) => String::new(), //&x.string(depth + 1),
-				FileAtom::Meta(x) => String::new(),      //&x.string(depth + 1),
-				FileAtom::FreeSpace(x) => String::new(), //&x.string(depth + 1),
+				FileAtom::MediaData(x) => x.string(depth + 1),
+				FileAtom::Meta(x) => x.string(depth + 1),
+				FileAtom::FreeSpace(x) => x.string(depth + 1),
 			}) + "\n}";
 		ret
 	}
@@ -1249,15 +1512,13 @@ pub enum MovieAtom {
 
 impl MovieAtom {
 	pub fn string(&self, depth: u16) -> String {
-		let ret = String::from("")
-			+ &match self {
-				MovieAtom::MovieHeader(x) => x.string(depth + 1),
-				MovieAtom::Track(x) => String::new(),
-				MovieAtom::UserData(x) => String::new(),
-				MovieAtom::MovieExtends(x) => String::new(),
-				MovieAtom::Meta(x) => String::new(),
-			};
-		ret
+		match self {
+			MovieAtom::MovieHeader(x) => x.string(depth + 1),
+			MovieAtom::Track(_x) => String::new(),
+			MovieAtom::UserData(x) => x.string(depth + 1),
+			MovieAtom::MovieExtends(_x) => String::new(),
+			MovieAtom::Meta(x) => x.string(depth + 1),
+		}
 	}
 }
 
@@ -1304,7 +1565,8 @@ pub enum SampleTableAtom {
 
 pub enum UserDataAtom {
 	// Copyright(CopyrightBox),
-	Other(std::boxed::Box<dyn UserDataType>),
+	// Other(std::boxed::Box<dyn UserDataType>),
+	Meta(MetaBox),
 }
 
 pub enum MovieExtendsAtom {
@@ -1327,9 +1589,11 @@ pub enum MovieExtendsAtom {
 // 	MovieFragmentRandomAccessOffset(MovieFragmentRandomAccessOffsetBox),
 // }
 
-pub enum MetaAtom {
-	Handler(HandlerBox),
-	DataInformation(DataInformationBox),
+enum MetaAtom {
+	// Handler(HandlerBox),
+	// DataInformation(DataInformationBox),
+	Free(FreeSpaceBox),
+	ItemList(ItemList),
 }
 
 pub enum Atom {

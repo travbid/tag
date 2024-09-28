@@ -1,4 +1,3 @@
-use core::convert::TryInto;
 use std::{
 	collections::HashSet,
 	fs::DirEntry,
@@ -9,7 +8,7 @@ use std::{
 
 use tag::{
 	id3::{self, ID3CommentFrame, ID3Frame, ID3PictureFrame},
-	mp4,
+	parse_mp4_frames,
 };
 
 struct PictureArg {
@@ -199,42 +198,6 @@ fn recode_m4a_file(path: &Path) -> Result<(), String> {
 	}
 
 	Ok(())
-}
-
-fn parse_mp4_frames(content: &[u8]) -> Vec<mp4::FileAtom> {
-	let mut ret = Vec::new();
-	let mut ix = 0;
-	while ix < content.len() {
-		let sz = u32::from_be_bytes(content[ix..ix + 4].try_into().unwrap());
-		let name = std::str::from_utf8(&content[ix + 4..ix + 8]).unwrap();
-		println!("parse_mp4_frames {} {} {}", ix, sz, name);
-		match name {
-			"ftyp" => ret.push(mp4::FileAtom::FileType(mp4::FileTypeBox::parse(
-				sz,
-				&content[ix + 8..ix + sz as usize],
-			))),
-
-			"moov" => ret.push(mp4::FileAtom::Movie(mp4::MovieBox::parse(
-				sz,
-				&content[ix + 8..ix + sz as usize],
-			))),
-
-			"free" => ret.push(mp4::FileAtom::FreeSpace(mp4::FreeSpaceBox::parse(
-				sz,
-				&content[ix + 8..ix + sz as usize],
-			))),
-
-			"mdat" => ret.push(mp4::FileAtom::MediaData(mp4::MediaDataBox::parse(
-				sz,
-				&content[ix + 8..ix + sz as usize],
-			))),
-			_ => {
-				panic!("Unahndled type: {}", name);
-			}
-		}
-		ix += sz as usize;
-	}
-	ret
 }
 
 // #[derive(Debug)]
