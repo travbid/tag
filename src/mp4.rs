@@ -186,8 +186,8 @@ pub struct MovieHeaderBox {
 
 	pub rate: u32,             // = 0x0001_0000 (1.0)
 	pub volume: u16,           // = 0x01_00 (1.0)
-	reserved1: u16,            // = 0
-	reserved2: [u32; 2],       // = 0
+	_reserved1: u16,           // = 0
+	_reserved2: [u32; 2],      // = 0
 	pub matrix: [u32; 9],      // = { 0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0x4000_0000 };
 	pub pre_defined: [u32; 6], // = 0
 	pub next_track_id: u32,
@@ -235,8 +235,8 @@ impl MovieHeaderBox {
 
 			rate: u32::from_be_bytes(data[off..off + 4].try_into().unwrap()),
 			volume: u16::from_be_bytes(data[off + 4..off + 6].try_into().unwrap()),
-			reserved1: u16::from_be_bytes(data[off + 6..off + 8].try_into().unwrap()),
-			reserved2: [
+			_reserved1: u16::from_be_bytes(data[off + 6..off + 8].try_into().unwrap()),
+			_reserved2: [
 				u32::from_be_bytes(data[off + 8..off + 12].try_into().unwrap()),
 				u32::from_be_bytes(data[off + 12..off + 16].try_into().unwrap()),
 			],
@@ -315,14 +315,14 @@ pub struct TrackHeaderBox {
 	pub creation_time: u64,
 	pub modification_time: u64,
 	pub track_id: u32,
-	reserved1: u32,    // = 0
+	_reserved1: u32,   // = 0
 	pub duration: u64, // seconds * 44100
 
-	reserved2: [u32; 2],
+	_reserved2: [u32; 2],
 	pub layer: u16,           // = 0
 	pub alternate_group: u16, // = 0,
 	pub volume: u16,          // {if track_is_audio 0x0100 else 0};
-	reserved3: u16,           // = 0
+	_reserved3: u16,          // = 0
 	pub matrix: [u32; 9],     // = { 0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0x4000_0000 };
 	pub width: u32,
 	pub height: u32,
@@ -369,10 +369,10 @@ impl TrackHeaderBox {
 			creation_time,
 			modification_time,
 			track_id,
-			reserved1,
+			_reserved1: reserved1,
 			duration,
 
-			reserved2: [
+			_reserved2: [
 				u32::from_be_bytes(data[off..off + 4].try_into().unwrap()),
 				u32::from_be_bytes(data[off + 4..off + 8].try_into().unwrap()),
 			],
@@ -380,7 +380,7 @@ impl TrackHeaderBox {
 			layer: u16::from_be_bytes(data[off + 8..off + 10].try_into().unwrap()),
 			alternate_group: u16::from_be_bytes(data[off + 10..off + 12].try_into().unwrap()),
 			volume: u16::from_be_bytes(data[off + 12..off + 14].try_into().unwrap()),
-			reserved3: u16::from_be_bytes(data[off + 14..off + 16].try_into().unwrap()),
+			_reserved3: u16::from_be_bytes(data[off + 14..off + 16].try_into().unwrap()),
 
 			matrix: [
 				u32::from_be_bytes(data[off + 16..off + 20].try_into().unwrap()),
@@ -580,7 +580,7 @@ impl MediaInformationBox {
 pub struct SoundMediaHeaderBox {
 	pub base: FullBox,
 	pub balance: u16, // = 0;
-	reserved: u16,    // = 0;
+	_reserved: u16,   // = 0;
 }
 
 impl SoundMediaHeaderBox {
@@ -596,7 +596,7 @@ impl SoundMediaHeaderBox {
 				flags: [data[1], data[2], data[3]],
 			},
 			balance: u16::from_be_bytes(data[4..6].try_into().unwrap()),
-			reserved: u16::from_be_bytes(data[6..8].try_into().unwrap()),
+			_reserved: u16::from_be_bytes(data[6..8].try_into().unwrap()),
 		}
 	}
 }
@@ -850,7 +850,7 @@ pub struct SampleEntry {
 	pub base: BaseBox,
 	// size
 	// pub boxtype: [u8; 4],
-	reserved: [u8; 6], // = 0
+	_reserved: [u8; 6], // = 0
 	pub data_reference_index: u16,
 }
 
@@ -873,7 +873,7 @@ impl HintSampleEntry {
 					size: sz,
 					boxtype: array_str("hint"),
 				},
-				reserved,
+				_reserved: reserved,
 				data_reference_index,
 			},
 			data: data[8..(sz as usize - 8)].to_vec(),
@@ -884,18 +884,18 @@ impl HintSampleEntry {
 pub struct VisualSampleEntry {
 	pub base: SampleEntry,
 
-	pre_defined1: u16,      // = 0
-	reserved1: u16,         // = 0
-	pre_defined2: [u32; 3], // = 0
+	_pre_defined1: u16,      // = 0
+	_reserved1: u16,         // = 0
+	_pre_defined2: [u32; 3], // = 0
 	pub width: u16,
 	pub height: u16,
 	horizresolution: u32, // = 0x00480000; // 72 dpi
 	vertresolution: u32,  // = 0x00480000; // 72 dpi
-	reserved2: u32,       // = 0
+	_reserved2: u32,      // = 0
 	frame_count: u16,     // = 1
 	pub compressor_name: [u8; 32],
-	depth: u16,        // 0x0018,
-	pre_defined3: i16, // = -1
+	depth: u16,         // 0x0018,
+	_pre_defined3: i16, // = -1
 }
 
 impl VisualSampleEntry {
@@ -925,21 +925,21 @@ impl VisualSampleEntry {
 					size: sz,
 					boxtype: array_str("vide"),
 				},
-				reserved,
+				_reserved: reserved,
 				data_reference_index,
 			},
-			pre_defined1,
-			reserved1,
-			pre_defined2,
+			_pre_defined1: pre_defined1,
+			_reserved1: reserved1,
+			_pre_defined2: pre_defined2,
 			width,
 			height,
 			horizresolution,
 			vertresolution,
-			reserved2,
+			_reserved2: reserved2,
 			frame_count,
 			compressor_name,
 			depth,
-			pre_defined3,
+			_pre_defined3: pre_defined3,
 		}
 	}
 }
@@ -947,12 +947,12 @@ impl VisualSampleEntry {
 pub struct AudioSampleEntry {
 	pub base: SampleEntry,
 
-	reserved1: [u32; 2],   // = 0
+	_reserved1: [u32; 2],  // = 0
 	pub channelcount: u16, // = 2,
 	pub samplesize: u16,   // = 2,
 
-	pre_defined: u16,    // = 0
-	reserved2: u16,      // = 0
+	_pre_defined: u16,   // = 0
+	_reserved2: u16,     // = 0
 	pub samplerate: u32, // {timescale of media} << 16
 }
 
@@ -976,14 +976,14 @@ impl AudioSampleEntry {
 					size: sz,
 					boxtype: array_str("soun"),
 				},
-				reserved,
+				_reserved: reserved,
 				data_reference_index,
 			},
-			reserved1,
+			_reserved1: reserved1,
 			channelcount,
 			samplesize,
-			pre_defined,
-			reserved2,
+			_pre_defined: pre_defined,
+			_reserved2: reserved2,
 			samplerate,
 		}
 	}
@@ -1489,7 +1489,7 @@ pub enum FileAtom {
 
 impl FileAtom {
 	pub fn string(&self, depth: u16) -> String {
-		let ret = String::from("FileAtom: {\n")
+		String::from("FileAtom: {\n")
 			+ &spacer(depth + 1)
 			+ &(match self {
 				FileAtom::FileType(x) => x.string(depth + 1),
@@ -1497,8 +1497,7 @@ impl FileAtom {
 				FileAtom::MediaData(x) => x.string(depth + 1),
 				FileAtom::Meta(x) => x.string(depth + 1),
 				FileAtom::FreeSpace(x) => x.string(depth + 1),
-			}) + "\n}";
-		ret
+			}) + "\n}"
 	}
 }
 
