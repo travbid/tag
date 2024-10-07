@@ -8,9 +8,10 @@ use std::{
 
 use tag::{
 	id3::{self, ID3CommentFrame, ID3Frame, ID3PictureFrame},
-	parse_mp4_frames,
+	mp4,
 };
 
+#[derive(Clone)]
 struct PictureArg {
 	typ: u8,
 	mime: String,
@@ -18,13 +19,14 @@ struct PictureArg {
 	path: String,
 }
 
+#[derive(Clone)]
 struct Flags {
 	title: Option<String>,
 	artist: Option<String>,
 	track: Option<String>,
 	album: Option<String>,
 	sort_album: Option<String>,
-	content_type: Option<String>, // Genre
+	genre: Option<String>, // Genre
 	record_date: Option<String>,
 	comment: Option<String>,
 	combine_comments: bool,
@@ -44,7 +46,7 @@ fn main() -> Result<(), i32> {
 	opts.optopt("", "album", "Album data to add", "ALBUM");
 	opts.optopt("", "sort-album", "Sort Album name", "ALBUM");
 	opts.optopt("", "record-date", "Date of recording", "YYYY-MM-DD");
-	opts.optopt("", "content-type", "Content-type (genre)", "GENRE");
+	opts.optopt("", "genre", "Genre", "GENRE");
 	opts.optopt("", "comment", "Comment data to add", "TEXT");
 	opts.optflag("", "combine_comments", "Combine comment frames");
 	opts.optmulti(
@@ -82,7 +84,7 @@ fn main() -> Result<(), i32> {
 		track: matches.opt_str("track"),
 		album: matches.opt_str("album"),
 		sort_album: matches.opt_str("sort-album"),
-		content_type: matches.opt_str("content-type"),
+		genre: matches.opt_str("genre"),
 		record_date: matches.opt_str("record-date"),
 		comment: matches.opt_str("comment"),
 		combine_comments: matches.opt_defined("combine_comments"),
@@ -176,25 +178,176 @@ fn recode_path(path: &Path, flags: &Flags) -> Result<(), String> {
 	if path.file_name().unwrap_or_default().to_string_lossy().ends_with(".mp3") {
 		recode_mp3_file(path, flags)?;
 	} else if path.file_name().unwrap_or_default().to_string_lossy().ends_with(".m4a") {
-		recode_m4a_file(path)?;
+		recode_m4a_file(path, flags.clone())?;
 	} else {
 		println!("Skipping {}", path.display());
 	}
 	Ok(())
 }
 
-fn recode_m4a_file(path: &Path) -> Result<(), String> {
+fn u32_from_be(slice: &[u8]) -> u32 {
+	u32::from_be_bytes(slice.try_into().unwrap())
+}
+
+enum Data<'a> {
+	Vec(Vec<u8>),
+	Slice(&'a [u8]),
+}
+impl<'a> Data<'a> {
+	fn len(&'a self) -> usize {
+		match self {
+			Self::Vec(v) => v.len(),
+			Self::Slice(s) => s.len(),
+		}
+	}
+}
+
+fn find_offset(content: &[u8], tag: &[u8; 4]) -> Option<usize> {
+	let mut ix = 0;
+	while ix < content.len() {
+		let size = u32_from_be(&content[ix..ix + 4]) as usize;
+		if size == 0 {
+			panic!("Found 0 size");
+		}
+		let boxtype = &content[ix + 4..ix + 8];
+		if boxtype == tag {
+			return Some(ix);
+		}
+		ix += size;
+	}
+	None
+}
+
+fn inject_ilst<'content>(content: &'content [u8], ilst_cfg: &mp4::ItemListConfig) -> Vec<Data<'content>> {
+	let mut ret: Vec<Data> = Vec::new();
+	let mut ix = 0;
+	while ix < content.len() {
+		let size = u32_from_be(&content[ix..ix + 4]);
+		let boxtype = &content[ix + 4..ix + 8];
+		if size == 0 {
+			panic!("0 size");
+		}
+		match boxtype {
+			// extends Box
+			b"moov" | b"udta" | b"trak" | b"mdia" | b"minf" | b"stbl" => {
+				let atoms = inject_ilst(&content[ix + 8..ix + size as usize], ilst_cfg);
+				let new_size: u32 = 8 + atoms.iter().fold(0, |acc, atom| acc + atom.len() as u32);
+				let mut data = new_size.to_be_bytes().to_vec();
+				data.extend_from_slice(boxtype);
+				ret.push(Data::Vec(data));
+				ret.extend(atoms.into_iter());
+			}
+			// extends FullBox
+			b"meta" => {
+				let atoms = inject_ilst(&content[ix + 12..ix + size as usize], ilst_cfg);
+				let new_size: u32 = 12 + atoms.iter().fold(0, |acc, atom| acc + atom.len() as u32);
+				let mut data = new_size.to_be_bytes().to_vec();
+				data.extend_from_slice(boxtype);
+				data.extend_from_slice(&content[8..12]);
+				ret.push(Data::Vec(data));
+
+				ret.extend(atoms.into_iter());
+			}
+			b"ilst" => {
+				let ilst = mp4::ItemList::parse(size, &content[ix..ix + size as usize]).apply_config(ilst_cfg.clone());
+				let byt = ilst.bytes();
+				ret.push(Data::Vec(byt));
+			}
+			// b"stco" => {}
+			_ => {
+				ret.push(Data::Slice(&content[ix..ix + size as usize]));
+			}
+		}
+		ix += size as usize;
+	}
+	ret
+}
+
+fn recode_m4a_file(path: &Path, cmd_flags: Flags) -> Result<(), String> {
 	let content = match std::fs::read(path) {
 		Ok(s) => s,
 		Err(e) => {
 			return Err(format!("Could not open file: {}: {}", path.display(), e));
 		}
 	};
+	let ilst = mp4::ItemListConfig {
+		title: cmd_flags.title,
+		artist: cmd_flags.artist.clone(),
+		album_artist: cmd_flags.artist,
+		track: cmd_flags.track.map(|track| track.parse::<u32>().unwrap()),
+		album: cmd_flags.album,
+		sort_album: cmd_flags.sort_album,
+		genre: cmd_flags.genre,
+		record_date: cmd_flags.record_date,
+		comment: cmd_flags.comment,
+		// combine_comments: cmd_flags.combine_comments,
+		// remove: cmd_flags.remove,
+	};
+	let top_level_atoms = inject_ilst(&content, &ilst);
 
-	let frames = parse_mp4_frames(&content);
-	// println!("mp4: {:?}", frames);
-	for f in frames {
-		println!("{}", f.string(0));
+	let mdat_offset_before = find_offset(&content, b"mdat").unwrap();
+
+	let mdat_offset_after = top_level_atoms
+		.iter()
+		.take_while(|atom| match atom {
+			Data::Vec(v) => v[4..8] != *b"mdat",
+			Data::Slice(v) => v[4..8] != *b"mdat",
+		})
+		.fold(0, |acc, atom| {
+			let slice: &[u8] = match atom {
+				Data::Vec(v) => v,
+				Data::Slice(v) => v,
+			};
+			acc + slice.len()
+		});
+
+	let offset_to_add: i32 = (mdat_offset_after - mdat_offset_before).try_into().unwrap();
+
+	let modified_atoms = top_level_atoms.into_iter().map(|mut atom| {
+		let slice: &[u8] = match atom {
+			Data::Vec(ref v) => v,
+			Data::Slice(v) => v,
+		};
+		if slice[4..8] == *b"stco" {
+			let size = u32_from_be(&slice[..4]);
+			let mut chunk_offset_atom = mp4::ChunkOffsetBox::parse(size, slice);
+			for offset in chunk_offset_atom.chunk_offsets.iter_mut() {
+				*offset = offset.checked_add_signed(offset_to_add as i32).unwrap();
+			}
+			atom = Data::Vec(chunk_offset_atom.bytes());
+		}
+		// TODO: co64
+		atom
+	});
+	let mut f = match std::fs::File::create(&cmd_flags.out_path) {
+		Ok(x) => x,
+		Err(e) => {
+			return Err(format!(
+				"Could not create file: {}: {}",
+				cmd_flags.out_path.display(),
+				e
+			));
+		}
+	};
+
+	for atom in modified_atoms {
+		let byte_slice = match &atom {
+			Data::Slice(s) => s,
+			Data::Vec(v) => v.as_slice(),
+		};
+		let atom_size = u32_from_be(&byte_slice[..4]);
+		if byte_slice.len() != atom_size as usize {
+			match &byte_slice[4..8] {
+				b"moov" | b"udta" | b"meta" | b"trak" | b"mdia" | b"minf" | b"stbl" => {}
+				_ => panic!("byte_slice.len() != atom_size: {} != {}", byte_slice.len(), atom_size),
+			}
+		}
+		match f.write_all(byte_slice) {
+			Ok(_) => (),
+			Err(e) => {
+				return Err(format!("Error writing bytes: {}", e));
+			}
+		};
 	}
 
 	Ok(())
@@ -399,11 +552,6 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 		}
 	};
 
-	let file_name_lossy = match path.file_name() {
-		Some(x) => x,
-		None => return Err(format!("Path has no file name: {}", path.display())),
-	};
-
 	let (mut frames, id3_size) = tag::read_id3_frames(&content);
 
 	frames.retain(|frame| {
@@ -468,12 +616,7 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 	move_text_item(&mut new_frames, &mut frames, b"TRCK".to_owned(), &cmd_flags.track);
 	move_text_item(&mut new_frames, &mut frames, b"TALB".to_owned(), &cmd_flags.album);
 	move_text_item(&mut new_frames, &mut frames, b"TSOA".to_owned(), &cmd_flags.sort_album);
-	move_text_item(
-		&mut new_frames,
-		&mut frames,
-		b"TCON".to_owned(),
-		&cmd_flags.content_type,
-	);
+	move_text_item(&mut new_frames, &mut frames, b"TCON".to_owned(), &cmd_flags.genre);
 
 	if let Some(item) = &cmd_flags.record_date {
 		new_frames.push(id3::ID3Frame {
@@ -608,7 +751,7 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 		Err(e) => {
 			return Err(format!(
 				"Could not create file: {}: {}",
-				file_name_lossy.to_string_lossy(),
+				cmd_flags.out_path.display(),
 				e
 			));
 		}
