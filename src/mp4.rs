@@ -1591,12 +1591,15 @@ impl ItunesInfo {
 	fn size(&self) -> u32 {
 		// size + "----" + size + "mean" + version + flags + mean + size + "name" + version + flags + name + size + "data" + version + flags + reserved + data
 		4 + 4
-			+ 4 + 4 + 1
-			+ 3 + self.mean.len() as u32
-			+ 4 + 4 + 1
-			+ 3 + self.name.len() as u32
-			+ 4 + 4 + 1
-			+ 3 + 4 + self.data.size()
+			+ 4 + 4
+			+ 1 + 3
+			+ self.mean.len() as u32
+			+ 4 + 4
+			+ 1 + 3
+			+ self.name.len() as u32
+			+ 4 + 4
+			+ 1 + 3
+			+ 4 + self.data.size()
 	}
 	fn bytes(&self) -> Vec<u8> {
 		let mut ret = self.size().to_be_bytes().to_vec();
