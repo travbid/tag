@@ -140,7 +140,7 @@ fn list_mp4_frames(path: &Path) -> Result<(), String> {
 	};
 	let list = parse_mp4_frames(&content);
 	for atom in list {
-		println!("atom: {}", atom.string(1));
+		println!("{}", atom.string(0));
 	}
 	Ok(())
 }

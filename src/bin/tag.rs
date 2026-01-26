@@ -253,6 +253,7 @@ fn inject_ilst<'content>(content: &'content [u8], ilst_cfg: &mp4::ItemListConfig
 				let byt = ilst.bytes();
 				ret.push(Data::Vec(byt));
 			}
+			b"free" => {}
 			// b"stco" => {}
 			_ => {
 				ret.push(Data::Slice(&content[ix..ix + size as usize]));
@@ -301,7 +302,9 @@ fn recode_m4a_file(path: &Path, cmd_flags: Flags) -> Result<(), String> {
 			acc + slice.len()
 		});
 
-	let offset_to_add: i32 = (mdat_offset_after - mdat_offset_before).try_into().unwrap();
+	let offset_to_add: i32 = (mdat_offset_after as isize - mdat_offset_before as isize)
+		.try_into()
+		.unwrap();
 
 	let modified_atoms = top_level_atoms.into_iter().map(|mut atom| {
 		let slice: &[u8] = match atom {
@@ -309,8 +312,7 @@ fn recode_m4a_file(path: &Path, cmd_flags: Flags) -> Result<(), String> {
 			Data::Slice(v) => v,
 		};
 		if slice[4..8] == *b"stco" {
-			let size = u32_from_be(&slice[..4]);
-			let mut chunk_offset_atom = mp4::ChunkOffsetBox::parse(size, slice);
+			let mut chunk_offset_atom = mp4::ChunkOffsetBox::parse(slice);
 			for offset in chunk_offset_atom.chunk_offsets.iter_mut() {
 				*offset = offset.checked_add_signed(offset_to_add as i32).unwrap();
 			}
@@ -535,7 +537,7 @@ fn move_text_item(new_list: &mut Vec<ID3Frame>, old_list: &mut Vec<ID3Frame>, co
 			flags: [0, 0],
 			data: id3::ID3FrameType::Text(id3::ID3TextFrame {
 				data: item.clone(),
-				encoding: if item.chars().all(|c| c.is_ascii()) { 0 } else { 3 },
+				encoding: if item.is_ascii() { 0 } else { 3 },
 			}),
 		});
 		old_list.retain(|f| f.id != code);
@@ -587,7 +589,7 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 			flags: [0, 0],
 			data: id3::ID3FrameType::Text(id3::ID3TextFrame {
 				data: artist.clone(),
-				encoding: if artist.chars().all(|c| c.is_ascii()) { 0 } else { 3 },
+				encoding: if artist.is_ascii() { 0 } else { 3 },
 			}),
 		});
 		new_frames.push(id3::ID3Frame {
@@ -595,7 +597,7 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 			flags: [0, 0],
 			data: id3::ID3FrameType::Text(id3::ID3TextFrame {
 				data: artist.clone(),
-				encoding: if artist.chars().all(|c| c.is_ascii()) { 0 } else { 3 },
+				encoding: if artist.is_ascii() { 0 } else { 3 },
 			}),
 		});
 		if let Some(ix) = frames.iter().position(|f| &f.id == b"TPE1") {
@@ -624,7 +626,7 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 			flags: [0, 0],
 			data: id3::ID3FrameType::Text(id3::ID3TextFrame {
 				data: item.clone(),
-				encoding: if item.chars().all(|c| c.is_ascii()) { 0 } else { 3 },
+				encoding: if item.is_ascii() { 0 } else { 3 },
 			}),
 		});
 		if let Some(ix) = frames.iter().position(|f| &f.id == b"TDRC") {
@@ -655,7 +657,7 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 				language: [b'e', b'n', b'g'], // eng
 				content_desc: String::new(),
 				text: comment.clone(),
-				encoding: if comment.chars().all(|c| c.is_ascii()) { 0 } else { 3 },
+				encoding: if comment.is_ascii() { 0 } else { 3 },
 			}),
 		});
 		frames.retain(|f| &f.id != b"COMM");
@@ -678,7 +680,7 @@ fn recode_mp3_file(path: &Path, cmd_flags: &Flags) -> Result<(), String> {
 		}
 		for comment in comments {
 			let (content_desc, text) = comment;
-			let encoding = if text.chars().all(|c| c.is_ascii()) && content_desc.chars().all(|c| c.is_ascii()) {
+			let encoding = if text.is_ascii() && content_desc.is_ascii() {
 				0
 			} else {
 				3

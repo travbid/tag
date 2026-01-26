@@ -396,23 +396,14 @@ pub fn parse_mp4_frames(content: &[u8]) -> Vec<mp4::FileAtom> {
 		println!("parse_mp4_frames {} {} {}", ix, sz, name);
 		match name {
 			"ftyp" => ret.push(mp4::FileAtom::FileType(mp4::FileTypeBox::parse(
-				sz,
-				&content[ix + 8..ix + sz as usize],
+				&content[ix..ix + sz as usize],
 			))),
-
 			"moov" => ret.push(mp4::FileAtom::Movie(mp4::MovieBox::parse(
-				sz,
-				&content[ix + 8..ix + sz as usize],
+				&content[ix..ix + sz as usize],
 			))),
-
-			"free" => ret.push(mp4::FileAtom::FreeSpace(mp4::FreeSpaceBox::parse(
-				sz,
-				&content[ix + 8..ix + sz as usize],
-			))),
-
+			"free" => ret.push(mp4::FileAtom::Free(mp4::FreeBox::parse(&content[ix..ix + sz as usize]))),
 			"mdat" => ret.push(mp4::FileAtom::MediaData(mp4::MediaDataBox::parse(
-				sz,
-				&content[ix + 8..ix + sz as usize],
+				&content[ix..ix + sz as usize],
 			))),
 			_ => {
 				panic!("Unahndled type: {}", name);

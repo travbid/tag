@@ -15,6 +15,26 @@ fn from_null_terminated(data: &[u8]) -> Result<String, std::string::FromUtf8Erro
 	}
 }
 
+fn byte_str(data: &[u8]) -> String {
+	match String::from_utf8(data.to_owned()) {
+		Ok(s) => s,
+		Err(_) => {
+			let mut s = String::from("[");
+			for b in data {
+				s += &b.to_string();
+				s += " ";
+			}
+			s.pop();
+			s += "]";
+			s
+		}
+	}
+}
+
+fn latin1_str(bytes: &[u8]) -> String {
+	bytes.iter().map(|&c| c as char).collect()
+}
+
 pub struct BaseBox {
 	pub size: u32,
 	pub boxtype: [u8; 4],
@@ -44,33 +64,33 @@ impl FullBox {
 // ftyp
 pub struct FileTypeBox {
 	pub base: BaseBox,
-	pub major_brand: u32,
+	pub major_brand: [u8; 4],
 	pub minor_version: u32,
 	pub compatible_brands: Vec<[u8; 4]>,
 }
 
 impl FileTypeBox {
-	pub fn parse(sz: u32, data: &[u8]) -> FileTypeBox {
+	pub fn parse(data: &[u8]) -> FileTypeBox {
 		let mut compatible_brands = Vec::new();
 		let mut ix: usize = 16;
-		while ix < sz as usize {
+		while ix < data.len() {
 			compatible_brands.push([data[ix], data[ix + 1], data[ix + 2], data[ix + 3]]);
-			ix += 32;
+			ix += 4;
 		}
 		FileTypeBox {
 			base: BaseBox {
-				size: sz,
+				size: data.len() as u32,
 				boxtype: *b"ftyp",
 			},
-			major_brand: u32::from_be_bytes(data[0..4].try_into().unwrap()),
-			minor_version: u32::from_be_bytes(data[4..8].try_into().unwrap()),
+			major_brand: [data[8], data[9], data[10], data[11]],
+			minor_version: u32::from_be_bytes(data[12..16].try_into().unwrap()),
 			compatible_brands,
 		}
 	}
 
 	pub fn string(&self, depth: u16) -> String {
 		let mut ret = String::from("ftyp: {\n");
-		ret += &(spacer(depth + 1) + "major_brand: " + &self.major_brand.to_string() + ",\n");
+		ret += &(spacer(depth + 1) + "major_brand: " + &byte_str(&self.major_brand) + ",\n");
 		ret += &(spacer(depth + 1) + "minor_version: " + &self.minor_version.to_string() + ",\n");
 		ret += &(spacer(depth + 1) + "compatible_brands: [");
 		if self.compatible_brands.is_empty() {
@@ -78,18 +98,7 @@ impl FileTypeBox {
 		} else {
 			ret += "\n";
 			for brand in &self.compatible_brands {
-				let name = match String::from_utf8(brand[0..4].to_vec()) {
-					Ok(x) => x,
-					Err(e) => {
-						eprintln!("{}", e);
-						let mut s = String::from("[");
-						for b in brand {
-							s += &(" ".to_owned() + &b.to_string());
-						}
-						s += "]";
-						s
-					}
-				};
+				let name = byte_str(brand);
 				ret += &(spacer(depth + 2) + &name + ",\n");
 			}
 			ret += &(spacer(depth + 1) + "]\n");
@@ -106,24 +115,23 @@ pub struct MovieBox {
 }
 
 impl MovieBox {
-	pub fn parse(sz: u32, data: &[u8]) -> MovieBox {
-		println!("MovieBox::parse({}, {})", sz, data.len());
+	pub fn parse(data: &[u8]) -> MovieBox {
 		let mut children = Vec::new();
-		let mut ix: usize = 0;
-		while ix < sz as usize - 8 {
+		let mut ix: usize = 8;
+		while ix < data.len() {
 			let inner_sz = u32::from_be_bytes(data[ix..ix + 4].try_into().unwrap());
 			let name = match std::str::from_utf8(&data[ix + 4..ix + 8]) {
 				Ok(x) => x,
 				Err(e) => panic!("from_utf8: {} {} {:?}", e, ix, &data[ix + 4..ix + 8]),
 			};
-			let inner_data = &data[ix + 8..ix + inner_sz as usize];
+			let inner_data = &data[ix..ix + inner_sz as usize];
 			let child = match name {
 				// "ipmc" => Atom::IPMPControl(IPMPControlBox::parse(inner_data)),
-				"mvhd" => MovieAtom::MovieHeader(MovieHeaderBox::parse(inner_sz, inner_data)),
-				"trak" => MovieAtom::Track(TrackBox::parse(inner_sz, inner_data)),
-				"mvex" => MovieAtom::MovieExtends(MovieExtendsBox::parse(inner_sz, inner_data)),
+				"mvhd" => MovieAtom::MovieHeader(MovieHeaderBox::parse(inner_data)),
+				"trak" => MovieAtom::Track(TrackBox::parse(inner_data)),
+				"mvex" => MovieAtom::MovieExtends(MovieExtendsBox::parse(inner_data)),
 				"meta" => MovieAtom::Meta(MetaBox::parse(inner_sz, inner_data)),
-				"udta" => MovieAtom::UserData(UserDataBox::parse(inner_sz, inner_data)),
+				"udta" => MovieAtom::UserData(UserDataBox::parse(inner_data)),
 				_ => panic!("Undhandled type in moov: {}, {:?}", name, &data[ix + 4..ix + 8]),
 			};
 			children.push(child);
@@ -131,7 +139,7 @@ impl MovieBox {
 		}
 		MovieBox {
 			base: BaseBox {
-				size: sz,
+				size: data.len() as u32,
 				boxtype: *b"moov",
 			},
 			children,
@@ -140,15 +148,8 @@ impl MovieBox {
 
 	pub fn string(&self, depth: u16) -> String {
 		let mut ret = String::from("moov: {\n");
-		ret += &(spacer(depth + 1) + "children: [");
-		if self.children.is_empty() {
-			ret += "]\n";
-		} else {
-			ret += "\n";
-			for child in &self.children {
-				ret += &(spacer(depth + 2) + &child.string(depth + 2) + ",\n");
-			}
-			ret += &(spacer(depth + 1) + "]\n");
+		for child in &self.children {
+			ret += &(spacer(depth + 1) + &child.string(depth + 1) + "\n");
 		}
 		ret += &(spacer(depth) + "}");
 		ret
@@ -161,23 +162,22 @@ pub struct MovieExtendsBox {
 }
 
 impl MovieExtendsBox {
-	fn parse(sz: u32, data: &[u8]) -> MovieExtendsBox {
-		println!("MovieExtendsBox::parse({}, {})", sz, data.len());
-		let mut children = Vec::new();
-		let mut ix: usize = 16;
-		while ix < sz as usize {
-			let inner_sz = u32::from_be_bytes(data[0..4].try_into().unwrap());
-			let name = std::str::from_utf8(&data[4..8]).unwrap();
-			let inner_data = &data[8..inner_sz as usize];
-			let child = match name {
-				_ => todo!("Undhandled type in mvex: {}, {:?}", name, &data[4..8]),
-			};
-			children.push(child);
-			ix += inner_sz as usize;
+	fn parse(data: &[u8]) -> MovieExtendsBox {
+		let children = Vec::new();
+		let ix: usize = 8 + 16;
+		while ix < data.len() {
+			// let inner_sz = u32::from_be_bytes(data[ix..ix + 4].try_into().unwrap());
+			let name = std::str::from_utf8(&data[ix + 4..ix + 8]).unwrap();
+			// let inner_data = &data[ix + 8..ix + inner_sz as usize];
+			// let child = match name { _ =>
+			todo!("Undhandled type in mvex: {}, {:?}", name, &data[4..8])
+			// };
+			// children.push(child);
+			// ix += inner_sz as usize;
 		}
 		MovieExtendsBox {
 			base: BaseBox {
-				size: sz,
+				size: data.len() as u32,
 				boxtype: *b"mvex",
 			},
 			children,
@@ -204,9 +204,8 @@ pub struct MovieHeaderBox {
 }
 
 impl MovieHeaderBox {
-	fn parse(sz: u32, data: &[u8]) -> MovieHeaderBox {
-		println!("MovieHeaderBox::parse({}, {})", sz, data.len());
-		let version = data[0];
+	fn parse(data: &[u8]) -> MovieHeaderBox {
+		let version = data[8];
 		if version != 0 && version != 1 {
 			panic!("mvhd version must be 0 or 1");
 		}
@@ -216,23 +215,23 @@ impl MovieHeaderBox {
 		let duration;
 		let off;
 		if version == 0 {
-			creation_time = u32::from_be_bytes(data[4..8].try_into().unwrap()) as u64;
-			modification_time = u32::from_be_bytes(data[8..12].try_into().unwrap()) as u64;
-			timescale = u32::from_be_bytes(data[12..16].try_into().unwrap());
-			duration = u32::from_be_bytes(data[16..20].try_into().unwrap()) as u64;
-			off = 20;
-		} else {
-			creation_time = u64::from_be_bytes(data[4..12].try_into().unwrap());
-			modification_time = u64::from_be_bytes(data[12..20].try_into().unwrap());
+			creation_time = u32::from_be_bytes(data[12..16].try_into().unwrap()) as u64;
+			modification_time = u32::from_be_bytes(data[16..20].try_into().unwrap()) as u64;
 			timescale = u32::from_be_bytes(data[20..24].try_into().unwrap());
-			duration = u64::from_be_bytes(data[24..32].try_into().unwrap());
-			off = 32;
+			duration = u32::from_be_bytes(data[24..28].try_into().unwrap()) as u64;
+			off = 28;
+		} else {
+			creation_time = u64::from_be_bytes(data[12..20].try_into().unwrap());
+			modification_time = u64::from_be_bytes(data[20..28].try_into().unwrap());
+			timescale = u32::from_be_bytes(data[28..32].try_into().unwrap());
+			duration = u64::from_be_bytes(data[32..40].try_into().unwrap());
+			off = 40;
 		};
 
 		MovieHeaderBox {
 			base: FullBox {
 				base: BaseBox {
-					size: sz,
+					size: data.len() as u32,
 					boxtype: *b"mvhd",
 				},
 				version,
@@ -275,9 +274,9 @@ impl MovieHeaderBox {
 
 	pub fn string(&self, depth: u16) -> String {
 		let mut ret = String::from("mvhd: {\n");
-		// chrono::
-		ret += &(spacer(depth + 1) + "creation_time: " + &self.creation_time.to_string());
-
+		ret += &(spacer(depth + 1) + "creation_time: " + &self.creation_time.to_string() + "\n");
+		ret += &spacer(depth);
+		ret += "}";
 		ret
 	}
 }
@@ -289,11 +288,10 @@ pub struct TrackBox {
 }
 
 impl TrackBox {
-	fn parse(sz: u32, data: &[u8]) -> TrackBox {
-		println!("TrackBox::parse({}, {})", sz, data.len());
+	fn parse(data: &[u8]) -> TrackBox {
 		let mut children = Vec::new();
-		let mut ix: usize = 0;
-		while ix < sz as usize - 8 {
+		let mut ix: usize = 8;
+		while ix < data.len() {
 			let inner_sz = u32::from_be_bytes(data[ix..ix + 4].try_into().unwrap());
 			let name = match std::str::from_utf8(&data[ix + 4..ix + 8]) {
 				Ok(x) => x,
@@ -301,8 +299,8 @@ impl TrackBox {
 			};
 			let inner_data = &data[ix..ix + inner_sz as usize];
 			let child = match name {
-				"tkhd" => TrackAtom::TrackHeader(TrackHeaderBox::parse(inner_sz, inner_data)),
-				"mdia" => TrackAtom::Media(MediaBox::parse(inner_sz, inner_data)),
+				"tkhd" => TrackAtom::TrackHeader(TrackHeaderBox::parse(inner_data)),
+				"mdia" => TrackAtom::Media(MediaBox::parse(inner_data)),
 				"edts" => TrackAtom::Edit(EditBox::parse(inner_sz, inner_data)),
 				_ => panic!("Undhandled type in trak: {}, {:?}", name, &data[ix + 4..ix + 8]),
 			};
@@ -311,11 +309,20 @@ impl TrackBox {
 		}
 		TrackBox {
 			base: BaseBox {
-				size: sz,
+				size: data.len() as u32,
 				boxtype: *b"trak",
 			},
 			children,
 		}
+	}
+
+	fn string(&self, depth: u16) -> String {
+		let mut ret = String::from("trak: {\n");
+		for child in &self.children {
+			ret += &(spacer(depth + 1) + &child.string(depth + 1) + "\n");
+		}
+		ret += &(spacer(depth) + "}");
+		ret
 	}
 }
 
@@ -340,9 +347,8 @@ pub struct TrackHeaderBox {
 }
 
 impl TrackHeaderBox {
-	pub fn parse(sz: u32, data: &[u8]) -> TrackHeaderBox {
-		println!("TrackHeaderBox::parse({}, {})", sz, data.len());
-		let version = data[0];
+	pub fn parse(data: &[u8]) -> TrackHeaderBox {
+		let version = data[8];
 		if version != 0 && version != 1 {
 			panic!("tkhd version must be 0 or 1");
 		}
@@ -353,29 +359,29 @@ impl TrackHeaderBox {
 		let duration;
 		let off;
 		if version == 0 {
-			creation_time = u32::from_be_bytes(data[4..8].try_into().unwrap()) as u64;
-			modification_time = u32::from_be_bytes(data[8..12].try_into().unwrap()) as u64;
-			track_id = u32::from_be_bytes(data[12..16].try_into().unwrap());
-			reserved1 = u32::from_be_bytes(data[16..20].try_into().unwrap());
-			duration = u32::from_be_bytes(data[20..24].try_into().unwrap()) as u64;
-			off = 24;
-		} else {
-			creation_time = u64::from_be_bytes(data[4..12].try_into().unwrap());
-			modification_time = u64::from_be_bytes(data[12..20].try_into().unwrap());
+			creation_time = u32::from_be_bytes(data[12..16].try_into().unwrap()) as u64;
+			modification_time = u32::from_be_bytes(data[16..20].try_into().unwrap()) as u64;
 			track_id = u32::from_be_bytes(data[20..24].try_into().unwrap());
 			reserved1 = u32::from_be_bytes(data[24..28].try_into().unwrap());
-			duration = u64::from_be_bytes(data[28..36].try_into().unwrap());
-			off = 36;
+			duration = u32::from_be_bytes(data[28..32].try_into().unwrap()) as u64;
+			off = 32;
+		} else {
+			creation_time = u64::from_be_bytes(data[12..20].try_into().unwrap());
+			modification_time = u64::from_be_bytes(data[20..28].try_into().unwrap());
+			track_id = u32::from_be_bytes(data[28..32].try_into().unwrap());
+			reserved1 = u32::from_be_bytes(data[32..36].try_into().unwrap());
+			duration = u64::from_be_bytes(data[36..44].try_into().unwrap());
+			off = 44;
 		};
 
 		TrackHeaderBox {
 			base: FullBox {
 				base: BaseBox {
-					size: sz,
+					size: data.len() as u32,
 					boxtype: *b"tkhd",
 				},
 				version,
-				flags: [data[1], data[2], data[3]],
+				flags: [data[9], data[10], data[11]],
 			},
 			creation_time,
 			modification_time,
@@ -408,6 +414,16 @@ impl TrackHeaderBox {
 			width: u32::from_be_bytes(data[off + 52..off + 56].try_into().unwrap()),
 			height: u32::from_be_bytes(data[off + 56..off + 60].try_into().unwrap()),
 		}
+	}
+
+	fn string(&self, depth: u16) -> String {
+		let mut ret = "tkhd: {\n".to_owned();
+		ret += &(spacer(depth + 1) + "creation_time: " + &self.creation_time.to_string() + "\n");
+		ret += &(spacer(depth + 1) + "modification_time: " + &self.modification_time.to_string() + "\n");
+		ret += &(spacer(depth + 1) + "track_id: " + &self.track_id.to_string() + "\n");
+		ret += &(spacer(depth + 1) + "duration: " + &self.duration.to_string() + "\n");
+		ret += &(spacer(depth) + "}");
+		ret
 	}
 }
 
@@ -467,6 +483,10 @@ impl EditBox {
 			},
 		}
 	}
+
+	fn string(&self, _depth: u16) -> String {
+		"edts: {}".to_owned()
+	}
 }
 
 pub struct EditListBox {
@@ -489,12 +509,11 @@ pub struct MediaBox {
 }
 
 impl MediaBox {
-	fn parse(sz: u32, data: &[u8]) -> MediaBox {
-		println!("MediaBox::parse({}, {})", sz, data.len());
+	fn parse(data: &[u8]) -> MediaBox {
 		let mut children = Vec::new();
 		let mut handler_type_opt = None;
 		let mut ix: usize = 8;
-		while ix < sz as usize {
+		while ix < data.len() {
 			let inner_sz = u32::from_be_bytes(data[ix..ix + 4].try_into().unwrap());
 			let name = match std::str::from_utf8(&data[ix + 4..ix + 8]) {
 				Ok(x) => x,
@@ -510,7 +529,7 @@ impl MediaBox {
 				}
 				"minf" => {
 					if let Some(handler_type) = handler_type_opt {
-						MediaAtom::MediaInformation(MediaInformationBox::parse(inner_sz, inner_data, handler_type))
+						MediaAtom::MediaInformation(MediaInformationBox::parse(inner_data, handler_type))
 					} else {
 						panic!("Did not find Meta box before trak");
 					}
@@ -522,11 +541,20 @@ impl MediaBox {
 		}
 		MediaBox {
 			base: BaseBox {
-				size: sz,
+				size: data.len() as u32,
 				boxtype: *b"mdia",
 			},
 			children,
 		}
+	}
+
+	fn string(&self, depth: u16) -> String {
+		let mut ret = "mdia: {\n".to_owned();
+		for child in &self.children {
+			ret += &(spacer(depth + 1) + &child.string(depth + 1) + "\n");
+		}
+		ret += &(spacer(depth) + "}");
+		ret
 	}
 }
 
@@ -545,7 +573,6 @@ pub struct MediaHeaderBox {
 
 impl MediaHeaderBox {
 	pub fn parse(sz: u32, data: &[u8]) -> MediaHeaderBox {
-		println!("MediaHeaderBox::parse({}, {})", sz, data.len());
 		let version = data[8];
 		if version != 0 && version != 1 {
 			panic!("mvhd version must be 0 or 1");
@@ -587,12 +614,22 @@ impl MediaHeaderBox {
 			pre_defined: u16::from_be_bytes(data[off + 2..off + 4].try_into().unwrap()),
 		}
 	}
+
+	fn string(&self, depth: u16) -> String {
+		let mut ret = "mdhd: {\n".to_owned();
+		ret += &(spacer(depth + 1) + &format!("creation_time: {}\n", self.creation_time));
+		ret += &(spacer(depth + 1) + &format!("modification_time: {}\n", self.modification_time));
+		ret += &(spacer(depth + 1) + &format!("timescale: {}\n", self.timescale));
+		ret += &(spacer(depth + 1) + &format!("duration: {}\n", self.duration));
+		ret += &(spacer(depth + 1) + &format!("language: {}\n", self.language));
+		ret += &(spacer(depth) + "}");
+		ret
+	}
 }
 
 // hdlr
 pub struct HandlerBox {
 	pub base: FullBox,
-
 	pub pre_defined: u32,
 	pub handler_type: [u8; 4],
 	pub reserved: [u32; 3], // = 0
@@ -601,7 +638,6 @@ pub struct HandlerBox {
 
 impl HandlerBox {
 	fn parse(sz: u32, data: &[u8]) -> HandlerBox {
-		println!("HandlerBox::parse({}, {})", sz, data.len());
 		HandlerBox {
 			base: FullBox {
 				base: BaseBox {
@@ -625,7 +661,11 @@ impl HandlerBox {
 		let mut ret = String::from("hdlr: {\n");
 		ret += &spacer(depth + 1);
 		ret += "handler_type: ";
-		ret += str::from_utf8(&self.handler_type).unwrap();
+		ret += &byte_str(&self.handler_type);
+		ret += "\n";
+		ret += &spacer(depth + 1);
+		ret += "handler_name: ";
+		ret += &self.name;
 		ret += "\n";
 		ret += &(spacer(depth) + "}");
 		ret
@@ -639,11 +679,10 @@ pub struct MediaInformationBox {
 }
 
 impl MediaInformationBox {
-	fn parse(sz: u32, data: &[u8], handler_type: [u8; 4]) -> MediaInformationBox {
-		println!("MediaInformationBox::parse({}, {})", sz, data.len());
+	fn parse(data: &[u8], handler_type: [u8; 4]) -> MediaInformationBox {
 		let mut children = Vec::new();
 		let mut ix: usize = 8;
-		while ix < sz as usize {
+		while ix < data.len() {
 			let inner_sz = u32::from_be_bytes(data[ix..ix + 4].try_into().unwrap());
 			let name = match std::str::from_utf8(&data[ix + 4..ix + 8]) {
 				Ok(x) => x,
@@ -652,7 +691,7 @@ impl MediaInformationBox {
 			let inner_data = &data[ix..ix + inner_sz as usize];
 			let child = match name {
 				"smhd" => MediaInformationAtom::SoundMediaHeader(SoundMediaHeaderBox::parse(inner_sz, inner_data)),
-				"dinf" => MediaInformationAtom::DataInformation(DataInformationBox::parse(inner_sz, inner_data)),
+				"dinf" => MediaInformationAtom::DataInformation(DataInformationBox::parse(inner_data)),
 				"stbl" => MediaInformationAtom::SampleTable(SampleTableBox::parse(inner_sz, inner_data, handler_type)),
 				_ => panic!("Undhandled type in minf: {}, {:?}", name, &data[ix + 4..ix + 8]),
 			};
@@ -661,11 +700,20 @@ impl MediaInformationBox {
 		}
 		MediaInformationBox {
 			base: BaseBox {
-				size: sz,
+				size: data.len() as u32,
 				boxtype: *b"minf",
 			},
 			children,
 		}
+	}
+
+	fn string(&self, depth: u16) -> String {
+		let mut ret = "minf: {\n".to_owned();
+		for child in &self.children {
+			ret += &(spacer(depth + 1) + &child.string(depth + 1) + "\n");
+		}
+		ret += &(spacer(depth) + "}");
+		ret
 	}
 }
 
@@ -678,7 +726,6 @@ pub struct SoundMediaHeaderBox {
 
 impl SoundMediaHeaderBox {
 	fn parse(sz: u32, data: &[u8]) -> SoundMediaHeaderBox {
-		println!("SoundMediaHeaderBox::parse({}, {})", sz, data.len());
 		SoundMediaHeaderBox {
 			base: FullBox {
 				base: BaseBox {
@@ -692,6 +739,10 @@ impl SoundMediaHeaderBox {
 			_reserved: u16::from_be_bytes(data[6..8].try_into().unwrap()),
 		}
 	}
+
+	fn string(&self, _depth: u16) -> String {
+		"smhd: {}".to_owned()
+	}
 }
 
 // dinf
@@ -701,19 +752,18 @@ pub struct DataInformationBox {
 }
 
 impl DataInformationBox {
-	fn parse(sz: u32, data: &[u8]) -> DataInformationBox {
-		println!("DataInformationBox::parse({}, {})", sz, data.len());
+	fn parse(data: &[u8]) -> DataInformationBox {
 		let mut children = Vec::new();
 		let mut ix: usize = 8;
-		while ix < sz as usize {
+		while ix < data.len() {
 			let inner_sz = u32::from_be_bytes(data[ix..ix + 4].try_into().unwrap());
 			let name = match std::str::from_utf8(&data[ix + 4..ix + 8]) {
 				Ok(x) => x,
 				Err(e) => panic!("from_utf8: {} {} {:?}", e, ix, &data[ix + 4..ix + 8]),
 			};
-			let inner_data = &data[ix + 8..ix + inner_sz as usize];
+			let inner_data = &data[ix..ix + inner_sz as usize];
 			let child = match name {
-				"dref" => Atom::DataReference(DataReferenceBox::parse(inner_sz, inner_data)),
+				"dref" => Atom::DataReference(DataReferenceBox::parse(inner_data)),
 				_ => panic!("Undhandled type in dinf: {}, {:?}", name, &data[ix + 4..ix + 8]),
 			};
 			children.push(child);
@@ -721,11 +771,15 @@ impl DataInformationBox {
 		}
 		DataInformationBox {
 			base: BaseBox {
-				size: sz,
+				size: data.len() as u32,
 				boxtype: *b"dinf",
 			},
 			children,
 		}
+	}
+
+	fn string(&self, _depth: u16) -> String {
+		"dinf: {}".to_owned()
 	}
 }
 
@@ -737,20 +791,19 @@ pub struct DataReferenceBox {
 }
 
 impl DataReferenceBox {
-	pub fn parse(sz: u32, data: &[u8]) -> DataReferenceBox {
-		println!("DataReferenceBox::parse({}, {})", sz, data.len());
-		let entry_count = u32::from_be_bytes(data[4..8].try_into().unwrap());
+	pub fn parse(data: &[u8]) -> DataReferenceBox {
+		let entry_count = u32::from_be_bytes(data[12..16].try_into().unwrap());
 		let mut entries = Vec::<DataEntryBox>::new();
-		let mut ix = 0;
+		let mut ix = 16;
 		for _ in 0..entry_count {
-			let d = DataEntryBox::parse(&data[8 + (ix)..]);
+			let d = DataEntryBox::parse(&data[ix..]);
 			ix += d.len() as usize;
 			entries.push(d);
 		}
 		DataReferenceBox {
 			base: FullBox {
 				base: BaseBox {
-					size: sz,
+					size: data.len() as u32,
 					boxtype: *b"dref",
 				},
 				version: data[0],
@@ -765,12 +818,11 @@ impl DataReferenceBox {
 pub enum DataEntryBox {
 	Url(DataEntryUrlBox),
 	Urn(DataEntryUrnBox),
-	Free(FreeSpaceBox),
+	Free(FreeBox),
 }
 
 impl DataEntryBox {
 	fn parse(data: &[u8]) -> DataEntryBox {
-		println!("DataEntryBox::parse({})", data.len());
 		let size = u32::from_be_bytes(data[0..4].try_into().unwrap());
 		let boxtype: [u8; 4] = data[4..8].try_into().unwrap();
 		let version = data[8];
@@ -796,7 +848,7 @@ impl DataEntryBox {
 				},
 			})
 		} else if boxtype == *b"free" {
-			DataEntryBox::Free(FreeSpaceBox::parse(size, &data[..size as usize]))
+			DataEntryBox::Free(FreeBox::parse(&data[8..8 + size as usize]))
 		} else {
 			panic!(
 				"Unhandled DataEntryBox type: {} {:?}",
@@ -835,7 +887,6 @@ pub struct SampleTableBox {
 
 impl SampleTableBox {
 	fn parse(sz: u32, data: &[u8], handler_type: [u8; 4]) -> SampleTableBox {
-		println!("SampleTableBox::parse({}, {})", sz, data.len());
 		let mut children = Vec::new();
 		let mut ix: usize = 8;
 		while ix < sz as usize {
@@ -851,7 +902,7 @@ impl SampleTableBox {
 				"stts" => SampleTableAtom::TimeToSample(TimeToSampleBox::parse(inner_sz, inner_data)),
 				"stsc" => SampleTableAtom::SampleToChunk(SampleToChunkBox::parse(inner_sz, inner_data)),
 				"stsz" => SampleTableAtom::SampleSize(SampleSizeBox::parse(inner_sz, inner_data)),
-				"stco" => SampleTableAtom::ChunkOffset(ChunkOffsetBox::parse(inner_sz, &data[ix..ix + inner_sz as usize])),
+				"stco" => SampleTableAtom::ChunkOffset(ChunkOffsetBox::parse(&data[ix..ix + inner_sz as usize])),
 				"sgpd" => SampleTableAtom::SampleGroupDescription(SampleGroupDescriptionBox::parse(
 					inner_sz,
 					&data[ix..ix + inner_sz as usize],
@@ -873,6 +924,10 @@ impl SampleTableBox {
 			children,
 		}
 	}
+
+	fn string(&self, _depth: u16) -> String {
+		"stbl: {}".to_owned()
+	}
 }
 
 // stsd
@@ -884,7 +939,6 @@ pub struct SampleDescriptionBox {
 
 impl SampleDescriptionBox {
 	fn parse(sz: u32, data: &[u8]) -> SampleDescriptionBox {
-		println!("SampleDescriptionBox::parse({}, {})", sz, data.len());
 		let entry_count = u32::from_be_bytes(data[4..8].try_into().unwrap());
 		let mut entries = Vec::<SampleEntryEnum>::new();
 		let mut ix = 0;
@@ -950,8 +1004,7 @@ pub struct SampleGroupDescriptionBox {
 // }
 
 impl SampleGroupDescriptionBox {
-	fn parse(size: u32, data: &[u8], handler_type: [u8; 4]) -> Self {
-		println!("SampleGroupDescriptionBox::parse({}, {})", size, data.len());
+	fn parse(size: u32, data: &[u8], _handler_type: [u8; 4]) -> Self {
 		let version = data[8];
 		let grouping_type = data[12..16].try_into().unwrap();
 		let (default_length, offset) = if version == 1 {
@@ -1013,7 +1066,6 @@ pub struct SampleToGroupEntry {
 
 impl SampleToGroupBox {
 	fn parse(size: u32, data: &[u8]) -> Self {
-		println!("SampleToGroupBox::parse({}, {})", size, data.len());
 		let version = data[8];
 		let grouping_type = data[12..16].try_into().unwrap();
 		let (grouping_type_parameter, offset) = if version == 1 {
@@ -1090,7 +1142,6 @@ pub struct HintSampleEntry {
 
 impl HintSampleEntry {
 	pub fn parse(sz: u32, data: &[u8]) -> HintSampleEntry {
-		println!("HintSampleEntry::parse");
 		if data.len() + 8 != sz as usize {
 			panic!("sz != data.len() + 8")
 		}
@@ -1118,18 +1169,17 @@ pub struct VisualSampleEntry {
 	_pre_defined2: [u32; 3], // = 0
 	pub width: u16,
 	pub height: u16,
-	horizresolution: u32, // = 0x00480000; // 72 dpi
-	vertresolution: u32,  // = 0x00480000; // 72 dpi
+	_horizresolution: u32, // = 0x00480000; // 72 dpi
+	_vertresolution: u32,  // = 0x00480000; // 72 dpi
 	_reserved2: u32,      // = 0
-	frame_count: u16,     // = 1
+	_frame_count: u16,     // = 1
 	pub compressor_name: [u8; 32],
-	depth: u16,         // 0x0018,
+	_depth: u16,         // 0x0018,
 	_pre_defined3: i16, // = -1
 }
 
 impl VisualSampleEntry {
 	pub fn parse(sz: u32, data: &[u8]) -> VisualSampleEntry {
-		println!("VisualSampleEntry::parse({}, {})", sz, data.len());
 		let reserved: [u8; 6] = data[0..6].try_into().unwrap();
 		let data_reference_index = u16::from_be_bytes(data[6..8].try_into().unwrap());
 		let pre_defined1 = u16::from_be_bytes(data[8..10].try_into().unwrap());
@@ -1162,12 +1212,12 @@ impl VisualSampleEntry {
 			_pre_defined2: pre_defined2,
 			width,
 			height,
-			horizresolution,
-			vertresolution,
+			_horizresolution: horizresolution,
+			_vertresolution: vertresolution,
 			_reserved2: reserved2,
-			frame_count,
+			_frame_count: frame_count,
 			compressor_name,
-			depth,
+			_depth: depth,
 			_pre_defined3: pre_defined3,
 		}
 	}
@@ -1187,7 +1237,6 @@ pub struct AudioSampleEntry {
 
 impl AudioSampleEntry {
 	pub fn parse(sz: u32, data: &[u8]) -> AudioSampleEntry {
-		println!("AudioSampleEntry::parse({}, {})", sz, data.len());
 		let reserved: [u8; 6] = data[0..6].try_into().unwrap();
 		let data_reference_index = u16::from_be_bytes(data[6..8].try_into().unwrap());
 		let reserved1: [u32; 2] = [
@@ -1243,7 +1292,6 @@ pub struct TimeToSampleBox {
 
 impl TimeToSampleBox {
 	fn parse(sz: u32, data: &[u8]) -> TimeToSampleBox {
-		println!("TimeToSampleBox::parse({}, {})", sz, data.len());
 		let entry_count = u32::from_be_bytes(data[4..8].try_into().unwrap());
 		let mut samples = Vec::<(u32, u32)>::new();
 		for i in 0..entry_count as usize {
@@ -1275,7 +1323,6 @@ pub struct SampleToChunkBox {
 
 impl SampleToChunkBox {
 	fn parse(sz: u32, data: &[u8]) -> SampleToChunkBox {
-		println!("SampleToChunkBox::parse({}, {})", sz, data.len());
 		let entry_count = u32::from_be_bytes(data[4..8].try_into().unwrap());
 		let mut samples = Vec::<(u32, u32, u32)>::new();
 		for i in 0..entry_count as usize {
@@ -1309,7 +1356,6 @@ pub struct SampleSizeBox {
 
 impl SampleSizeBox {
 	fn parse(sz: u32, data: &[u8]) -> SampleSizeBox {
-		println!("SampleSizeBox::parse({}, {})", sz, data.len());
 		let sample_size = u32::from_be_bytes(data[4..8].try_into().unwrap());
 		let sample_count = u32::from_be_bytes(data[8..12].try_into().unwrap());
 		let mut entry_sizes = Vec::<u32>::new();
@@ -1339,11 +1385,8 @@ pub struct ChunkOffsetBox {
 }
 
 impl ChunkOffsetBox {
-	pub fn parse(sz: u32, data: &[u8]) -> ChunkOffsetBox {
-		println!("ChunkOffsetBox::parse({}, {})", sz, data.len());
-		let sz = u32::from_be_bytes(data[..4].try_into().unwrap());
+	pub fn parse(data: &[u8]) -> ChunkOffsetBox {
 		let entry_count = u32::from_be_bytes(data[12..16].try_into().unwrap());
-		println!("entrycount: {} {:?}", entry_count, &data[12..16]);
 		let mut chunk_offsets = Vec::<u32>::new();
 		for i in 0..entry_count as usize {
 			chunk_offsets.push(u32::from_be_bytes(data[16 + (i * 4)..20 + (i * 4)].try_into().unwrap()));
@@ -1351,7 +1394,7 @@ impl ChunkOffsetBox {
 		ChunkOffsetBox {
 			base: FullBox {
 				base: BaseBox {
-					size: sz,
+					size: data.len() as u32,
 					boxtype: *b"stco",
 				},
 				version: data[8],
@@ -1381,26 +1424,25 @@ pub struct UserDataBox {
 }
 
 impl UserDataBox {
-	fn parse(sz: u32, data: &[u8]) -> UserDataBox {
-		println!("UserDataBox::parse({}, {})", sz, data.len());
-		let mut total = 0;
+	fn parse(data: &[u8]) -> UserDataBox {
+		let mut ix = 8;
 		let mut children = Vec::new();
-		while total < sz - 8 {
-			let box_sz = u32::from_be_bytes(data[total as usize..total as usize + 4].try_into().unwrap());
-			let box_type = str::from_utf8(&data[total as usize + 4..total as usize + 8]).unwrap();
+		while ix < data.len() {
+			let box_sz = u32::from_be_bytes(data[ix..ix + 4].try_into().unwrap());
+			let box_type = str::from_utf8(&data[ix + 4..ix + 8]).unwrap();
 			// let v = data[total as usize..(total + sz2) as usize].to_vec();
 			if box_type == "meta" {
-				let meta = MetaBox::parse(box_sz, &data[total as usize..total as usize + box_sz as usize]);
+				let meta = MetaBox::parse(box_sz, &data[ix..ix + box_sz as usize]);
 				children.push(UserDataAtom::Meta(meta));
 			} else {
 				panic!("Unknown type in udta: {box_type}");
 			}
-			total += box_sz;
+			ix += box_sz as usize;
 		}
 
 		UserDataBox {
 			base: BaseBox {
-				size: sz,
+				size: data.len() as u32,
 				boxtype: *b"udta",
 			},
 			children,
@@ -1408,14 +1450,11 @@ impl UserDataBox {
 	}
 	pub fn string(&self, depth: u16) -> String {
 		let mut ret = String::from("udta: {\n");
-		ret += &spacer(depth + 1);
-		ret += "children: [\n";
 		for item in &self.children {
 			ret += &match item {
-				UserDataAtom::Meta(x) => x.string(depth + 1),
+				UserDataAtom::Meta(x) => spacer(depth + 1) + &x.string(depth + 1) + "\n",
 			};
 		}
-		ret += "]\n";
 		ret += &(spacer(depth) + "}");
 		ret
 	}
@@ -1436,7 +1475,6 @@ pub struct MetaBox {
 
 impl MetaBox {
 	fn parse(sz: u32, data: &[u8]) -> MetaBox {
-		println!("MetaBox::parse({}, {})", sz, data.len());
 		let version = data[8];
 		let flags = [data[9], data[10], data[11]];
 		let hdlr_sz = u32::from_be_bytes(data[12..16].try_into().unwrap());
@@ -1460,10 +1498,7 @@ impl MetaBox {
 				let item_list = ItemList::parse(box_size, &data[udx..udx + box_size as usize]);
 				other_boxes.push(MetaAtom::ItemList(item_list));
 			} else if box_type == "free" {
-				other_boxes.push(MetaAtom::Free(FreeSpaceBox::parse(
-					box_size,
-					&data[udx..udx + box_size as usize],
-				)));
+				other_boxes.push(MetaAtom::Free(FreeBox::parse(&data[udx..udx + box_size as usize])));
 			} else {
 				panic!("Unknown box type: {box_type}");
 			}
@@ -1485,18 +1520,15 @@ impl MetaBox {
 	pub fn string(&self, depth: u16) -> String {
 		let mut ret = String::from("meta: {\n");
 		ret += &spacer(depth + 1);
-		ret += "handler: ";
 		ret += &self.handler.string(depth + 1);
 		ret += "\n";
-		ret += &spacer(depth + 1);
-		ret += "other_boxes: [";
 		for item in &self.other_boxes {
+			ret += &spacer(depth + 1);
 			ret += &match item {
-				MetaAtom::Free(x) => x.string(depth + 1),
-				MetaAtom::ItemList(x) => x.string(depth + 1),
+				MetaAtom::Free(x) => x.string() + "\n",
+				MetaAtom::ItemList(x) => x.string(depth + 1) + "\n",
 			};
 		}
-		ret += "]\n";
 		ret += &(spacer(depth) + "}");
 		ret
 	}
@@ -1505,44 +1537,41 @@ impl MetaBox {
 // mdat
 pub struct MediaDataBox {
 	pub base: BaseBox,
-	pub data: Vec<u8>,
+	// pub data: Vec<u8>,
+	pub data: u64,
 }
 
 impl MediaDataBox {
-	pub fn parse(sz: u32, data: &[u8]) -> MediaDataBox {
-		println!("MediaDataBox::parse({}, {})", sz, data.len());
+	pub fn parse(data: &[u8]) -> MediaDataBox {
 		MediaDataBox {
 			base: BaseBox {
-				size: sz,
+				size: data.len() as u32,
 				boxtype: *b"mdat",
 			},
-			data: Vec::new(),
+			// data: Vec::new(),
+			data: (data.len() - 8) as u64,
 		}
 	}
-	pub fn string(&self, depth: u16) -> String {
-		let mut ret = String::from("mdat: {\n");
-		ret += &format!("{}data: {} bytes", spacer(depth + 1), self.data.len());
-		ret += &(spacer(depth) + "}");
-		ret
+	pub fn string(&self) -> String {
+		format!("mdat: {{ data: {} bytes }}", self.data)
 	}
 }
 
-pub struct FreeSpaceBox {
+pub struct FreeBox {
 	pub base: BaseBox,
 }
 
-impl FreeSpaceBox {
-	pub fn parse(sz: u32, data: &[u8]) -> FreeSpaceBox {
-		println!("FreeSpaceBox::parse({}, {})", sz, data.len());
-		FreeSpaceBox {
+impl FreeBox {
+	pub fn parse(data: &[u8]) -> Self {
+		FreeBox {
 			base: BaseBox {
-				size: sz,
+				size: data.len() as u32,
 				boxtype: *b"free",
 			},
 		}
 	}
-	pub fn string(&self, depth: u16) -> String {
-		format!("{}free: {} bytes", spacer(depth + 1), self.base.size)
+	pub fn string(&self) -> String {
+		format!("free: {{ {} bytes }}", self.base.size)
 	}
 }
 
@@ -1690,7 +1719,6 @@ pub struct ItemListConfig {
 // }
 impl ItemList {
 	pub fn parse(sz: u32, data: &[u8]) -> ItemList {
-		println!("ItemList::parse({}, {})", sz, data.len());
 		let mut items = Vec::new();
 		let mut idx = 8;
 		while idx < sz {
@@ -1756,7 +1784,7 @@ impl ItemList {
 				if data_tag != b"data" {
 					panic!("Expected \"data\" {sz} {:?} {data_sz} {:?}", tag_id, data_tag);
 				}
-				let version = data[data_ix + 8];
+				let _version = data[data_ix + 8];
 				let data_type = u32::from_be_bytes([0, data[data_ix + 9], data[data_ix + 10], data[data_ix + 11]]);
 				let value = if data_type == 0 {
 					// TODO(Travers): Encoding Params
@@ -1807,8 +1835,8 @@ impl ItemList {
 				ItemListType::Item(ili) => {
 					ret += &spacer(depth + 1);
 					ret += &match &ili.value {
-						ItunesValue::Binary(x) => format!("{}: {},\n", String::from_utf8_lossy(&ili.tag_id), x),
-						ItunesValue::Text(x) => format!("{}: {},\n", String::from_utf8_lossy(&ili.tag_id), x),
+						ItunesValue::Binary(x) => format!("{}: {},\n", latin1_str(&ili.tag_id), x),
+						ItunesValue::Text(x) => format!("{}: {},\n", latin1_str(&ili.tag_id), x),
 					};
 				}
 				ItemListType::ItunesInfo(info) => {
@@ -1824,7 +1852,6 @@ impl ItemList {
 		ret
 	}
 	pub fn apply_config(&self, cfg: ItemListConfig) -> Self {
-		println!("apply_config");
 		let mut items = Vec::new();
 		if let Some(title) = cfg.title {
 			items.push(ItemListType::Item(ItemListItem {
@@ -1919,9 +1946,6 @@ impl ItemList {
 		ret
 	}
 }
-// pub enum BaseAtom {
-// 	FreeSpace(FreeSpaceBox),
-// }
 
 pub enum FileAtom {
 	FileType(FileTypeBox),
@@ -1930,20 +1954,22 @@ pub enum FileAtom {
 	// MovieFragment(MovieFragmentBox),
 	// MovieFragmentRandomAccess(MovieFragmentRandomAccessBox),
 	Meta(MetaBox),
-	FreeSpace(FreeSpaceBox),
+	Free(FreeBox),
 }
 
 impl FileAtom {
 	pub fn string(&self, depth: u16) -> String {
-		String::from("FileAtom: {\n")
-			+ &spacer(depth + 1)
-			+ &(match self {
-				FileAtom::FileType(x) => x.string(depth + 1),
-				FileAtom::Movie(x) => x.string(depth + 1),
-				FileAtom::MediaData(x) => x.string(depth + 1),
-				FileAtom::Meta(x) => x.string(depth + 1),
-				FileAtom::FreeSpace(x) => x.string(depth + 1),
-			}) + "\n}"
+		// String::from("FileAtom: {\n")
+		// 	+ &spacer(depth + 1)
+		// 	+ &(
+		match self {
+			FileAtom::FileType(x) => x.string(depth),
+			FileAtom::Movie(x) => x.string(depth),
+			FileAtom::MediaData(x) => x.string(),
+			FileAtom::Meta(x) => x.string(depth),
+			FileAtom::Free(x) => x.string(),
+		}
+		// ) + "\n}"
 	}
 }
 
@@ -1958,11 +1984,11 @@ pub enum MovieAtom {
 impl MovieAtom {
 	pub fn string(&self, depth: u16) -> String {
 		match self {
-			MovieAtom::MovieHeader(x) => x.string(depth + 1),
-			MovieAtom::Track(_x) => String::new(),
-			MovieAtom::UserData(x) => x.string(depth + 1),
+			MovieAtom::MovieHeader(x) => x.string(depth),
+			MovieAtom::Track(x) => x.string(depth),
+			MovieAtom::UserData(x) => x.string(depth),
 			MovieAtom::MovieExtends(_x) => String::new(),
-			MovieAtom::Meta(x) => x.string(depth + 1),
+			MovieAtom::Meta(x) => x.string(depth),
 		}
 	}
 }
@@ -1976,16 +2002,48 @@ pub enum TrackAtom {
 	Meta(MetaBox),
 }
 
+impl TrackAtom {
+	pub fn string(&self, depth: u16) -> String {
+		match self {
+			TrackAtom::TrackHeader(x) => x.string(depth),
+			TrackAtom::Media(x) => x.string(depth),
+			TrackAtom::Edit(x) => x.string(depth),
+			TrackAtom::UserData(x) => x.string(depth),
+			TrackAtom::Meta(x) => x.string(depth),
+		}
+	}
+}
+
 pub enum MediaAtom {
 	MediaHeader(MediaHeaderBox),
 	Handler(HandlerBox),
 	MediaInformation(MediaInformationBox),
 }
 
+impl MediaAtom {
+	pub fn string(&self, depth: u16) -> String {
+		match self {
+			MediaAtom::MediaHeader(x) => x.string(depth),
+			MediaAtom::Handler(x) => x.string(depth),
+			MediaAtom::MediaInformation(x) => x.string(depth),
+		}
+	}
+}
+
 pub enum MediaInformationAtom {
 	SoundMediaHeader(SoundMediaHeaderBox),
 	DataInformation(DataInformationBox),
 	SampleTable(SampleTableBox),
+}
+
+impl MediaInformationAtom {
+	pub fn string(&self, depth: u16) -> String {
+		match self {
+			MediaInformationAtom::SoundMediaHeader(x) => x.string(depth),
+			MediaInformationAtom::DataInformation(x) => x.string(depth),
+			MediaInformationAtom::SampleTable(x) => x.string(depth),
+		}
+	}
 }
 
 pub enum DataInformationAtom {
@@ -2039,7 +2097,7 @@ pub enum MovieExtendsAtom {
 enum MetaAtom {
 	// Handler(HandlerBox),
 	// DataInformation(DataInformationBox),
-	Free(FreeSpaceBox),
+	Free(FreeBox),
 	ItemList(ItemList),
 }
 
