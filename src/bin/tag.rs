@@ -3,6 +3,7 @@ use std::{
 	fs::DirEntry,
 	io::Write,
 	path::{Path, PathBuf},
+	process::ExitCode,
 	vec::Vec,
 };
 
@@ -36,10 +37,11 @@ struct Flags {
 	out_path: PathBuf,
 }
 
-fn main() -> Result<(), i32> {
+fn main() -> ExitCode {
 	let args: Vec<String> = std::env::args().collect();
 
 	let mut opts = getopts::Options::new();
+	opts.optflag("h", "help", "Show help");
 	opts.optopt("", "title", "Title data to add", "TITLE");
 	opts.optopt("", "artist", "Artist / Album Artist data to add", "ARTIST");
 	opts.optopt("", "track", "Track data to add", "TRACK");
@@ -66,15 +68,22 @@ fn main() -> Result<(), i32> {
 		Ok(x) => x,
 		Err(e) => {
 			println!("Argument error: {}", e);
-			return Err(1);
+			println!("{}", opts.usage(""));
+			return ExitCode::FAILURE;
 		}
 	};
+
+	if matches.opt_present("help") {
+		println!("{}", opts.usage(""));
+		return ExitCode::SUCCESS;
+	}
 
 	let out_path = match matches.opt_str("output") {
 		Some(x) => x,
 		None => {
 			println!("Required: output path");
-			return Err(1);
+			println!("{}", opts.usage(""));
+			return ExitCode::FAILURE;
 		}
 	};
 
@@ -88,7 +97,7 @@ fn main() -> Result<(), i32> {
 		record_date: matches.opt_str("record-date"),
 		comment: matches.opt_str("comment"),
 		combine_comments: matches.opt_defined("combine_comments"),
-		pictures: matches
+		pictures: match matches
 			.opt_strs("picture")
 			.iter()
 			.map(|arg| {
@@ -118,7 +127,11 @@ fn main() -> Result<(), i32> {
 					path,
 				})
 			})
-			.collect::<Result<Vec<_>, i32>>()?,
+			.collect::<Result<Vec<_>, i32>>()
+		{
+			Ok(x) => x,
+			Err(_) => return ExitCode::FAILURE,
+		},
 		remove: matches
 			.opt_str("remove")
 			.unwrap_or(String::new())
@@ -130,7 +143,7 @@ fn main() -> Result<(), i32> {
 
 	if matches.free.len() != 1 {
 		println!("File or directory path required");
-		return Err(1);
+		return ExitCode::FAILURE;
 	}
 
 	let path = &matches.free[0];
@@ -139,16 +152,16 @@ fn main() -> Result<(), i32> {
 		Ok(x) => x,
 		Err(e) => {
 			println!("Could not read path {}: {}", path, e);
-			return Err(1);
+			return ExitCode::FAILURE;
 		}
 	};
 
 	if metadata.is_file() {
 		return match recode_path(Path::new(path), &flags) {
-			Ok(_) => Ok(()),
+			Ok(_) => ExitCode::SUCCESS,
 			Err(e) => {
 				println!("{}", e);
-				Err(1)
+				ExitCode::FAILURE
 			}
 		};
 	}
@@ -157,7 +170,7 @@ fn main() -> Result<(), i32> {
 		Ok(x) => x,
 		Err(e) => {
 			println!("Error reading directory {}: {}", path, e);
-			return Err(0);
+			return ExitCode::FAILURE;
 		}
 	};
 
@@ -167,11 +180,11 @@ fn main() -> Result<(), i32> {
 	for path in paths {
 		if let Err(e) = recode_path(&path.path(), &flags) {
 			println!("Error on {}: {}", path.file_name().to_str().unwrap(), e);
-			return Err(1);
+			return ExitCode::FAILURE;
 		}
 	}
 
-	Ok(())
+	ExitCode::SUCCESS
 }
 
 fn recode_path(path: &Path, flags: &Flags) -> Result<(), String> {
